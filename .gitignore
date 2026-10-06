@@ -1,0 +1,6 @@
+/artifacts/
+*.rpm
+*.raw
+.env
+.env.*
+.DS_Store

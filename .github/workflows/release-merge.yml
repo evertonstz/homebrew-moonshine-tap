@@ -1,0 +1,58 @@
+name: Moonshine protected release merge
+
+'on':
+  workflow_run:
+    workflows: [Moonshine CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+# Share the detection and publication lock. Do not cancel jobs that hold credentials.
+concurrency:
+  group: moonshine-release-update
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: >-
+      github.repository == 'evertonstz/homebrew-moonshine-tap' &&
+      vars.MOONSHINE_RELEASE_UPDATES_ENABLED == 'true' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'automation/moonshine-release' &&
+      github.event.workflow_run.head_repository.full_name == 'evertonstz/homebrew-moonshine-tap'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out current trusted main, never the PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Set up Ruby before minting write credentials
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          ruby-version: '4.0.6'
+      - name: Mint a short-lived token for protected PR merge only
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.MOONSHINE_APP_ID }}
+          private-key: ${{ secrets.MOONSHINE_APP_PRIVATE_KEY }}
+          owner: evertonstz
+          repositories: homebrew-moonshine-tap
+          permission-contents: write
+          permission-pull-requests: write
+          permission-actions: read
+          permission-administration: read
+      - name: Check actual CI, exact patch, head and current-base protection
+        env:
+          MOONSHINE_APP_TOKEN: ${{ steps.app.outputs.token }}
+          MOONSHINE_TOKEN_APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          MOONSHINE_APP_SLUG: ${{ vars.MOONSHINE_APP_SLUG }}
+          MOONSHINE_BOT_ID: ${{ vars.MOONSHINE_BOT_ID }}
+          MOONSHINE_CHECK_APP_ID: ${{ vars.MOONSHINE_CHECK_APP_ID }}
+          MOONSHINE_RELEASE_UPDATES_ENABLED: ${{ vars.MOONSHINE_RELEASE_UPDATES_ENABLED }}
+          MOONSHINE_CI_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: ruby --disable=rubyopt tools/github_release.rb merge

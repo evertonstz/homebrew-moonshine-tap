@@ -1,0 +1,101 @@
+name: Moonshine CI
+
+'on':
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Moonshine checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    env:
+      MOONSHINE_TEST_RPM: ${{ runner.temp }}/moonshine.rpm
+      MOONSHINE_COMPARE_RETAINED: ${{ github.event_name == 'pull_request' && github.head_ref == 'automation/moonshine-release' }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Homebrew for read-only cask validation
+        id: homebrew
+        uses: Homebrew/actions/setup-homebrew@1e34f2e2acaa766b7efacb8c26352e6abbb023f9 # 2026.09.13.1
+        with:
+          stable: true
+          debug: false
+          token: ''
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          ruby-version: '4.0.6'
+      - name: Install test dependency
+        run: gem install minitest --version 6.0.0 --no-document
+      - name: Install RPM extraction tool on Linux runner
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libarchive-tools
+      - name: Select the explicit extraction tool
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Linux) tool=/usr/bin/bsdtar ;;
+            macOS) tool=/usr/bin/tar ;;
+            *) exit 1 ;;
+          esac
+          test -x "$tool"
+          printf 'MOONSHINE_TEST_BSDTAR=%s\n' "$tool" >> "$GITHUB_ENV"
+      - name: Check source and all generated casks
+        run: |
+          ruby -e 'Dir.glob("{Casks,lib,releases,tools,tests}/**/*.rb").sort.each { |path| abort "Ruby syntax failed: #{path}" unless system(RbConfig.ruby, "-c", path) }'
+          for script in reference/*.sh releases/previous/*.sh; do
+            if test -f "$script"; then sh -n "$script"; fi
+          done
+          ruby tools/generate_cask.rb --check
+          git diff --check
+      - name: Load every offered token with Homebrew
+        env:
+          MOONSHINE_CI_TAP: ${{ steps.homebrew.outputs.tap-name }}
+        run: ruby tools/check_casks.rb --brew "$(command -v brew)" --tap "$MOONSHINE_CI_TAP"
+      - name: Inspect and extract every retained official RPM
+        shell: bash
+        run: |
+          args=()
+          if test "$MOONSHINE_COMPARE_RETAINED" = true; then args+=(--compare); fi
+          ruby tools/check_releases.rb --bsdtar "$MOONSHINE_TEST_BSDTAR" --test-rpm-copy "$MOONSHINE_TEST_RPM" "${args[@]}"
+      - name: Run all regressions with mandatory official RPM extraction
+        run: ruby tools/run_tests.rb --no-skips
+
+  required:
+    name: Moonshine required validation
+    needs: [checks]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          ruby-version: '4.0.6'
+      - name: Require all prerequisite jobs to succeed
+        env:
+          MOONSHINE_CI_NEEDS: ${{ toJSON(needs) }}
+        run: |
+          ruby -r json -r ./lib/ci_validation -e 'abort "Required validation work failed, skipped, was cancelled or is missing" unless MoonshineCI.successful?(JSON.parse(ENV.fetch("MOONSHINE_CI_NEEDS")))'
