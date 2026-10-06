@@ -23,7 +23,6 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15]
     env:
-      MOONSHINE_TEST_RPM: ${{ runner.temp }}/moonshine.rpm
       MOONSHINE_COMPARE_RETAINED: ${{ github.event_name == 'pull_request' && github.head_ref == 'automation/moonshine-release' }}
     steps:
       - name: Check out source
@@ -58,6 +57,7 @@ jobs:
           esac
           test -x "$tool"
           printf 'MOONSHINE_TEST_BSDTAR=%s\n' "$tool" >> "$GITHUB_ENV"
+          printf 'MOONSHINE_TEST_RPM=%s/moonshine.rpm\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Check source and all generated casks
         run: |
           ruby -e 'Dir.glob("{Casks,lib,releases,tools,tests}/**/*.rb").sort.each { |path| abort "Ruby syntax failed: #{path}" unless system(RbConfig.ruby, "-c", path) }'

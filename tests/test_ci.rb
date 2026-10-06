@@ -57,6 +57,25 @@ class CIValidationTest < Minitest::Test
     assert_includes aggregate.fetch('steps').last.fetch('run'), 'MoonshineCI.successful?'
   end
 
+  def test_rpm_path_is_initialized_on_runner_not_in_job_environment
+    checks = YAML.safe_load((ROOT/'.github/workflows/ci.yml').read).fetch('jobs').fetch('checks')
+    checks.fetch('env').each_value do |value|
+      refute_match(/\$\{\{[^}]*\brunner\./, value.to_s, 'The runner context is unavailable in job-level env')
+    end
+    refute checks.fetch('env').key?('MOONSHINE_TEST_RPM')
+    step = checks.fetch('steps').find { |item| item['name'] == 'Select the explicit extraction tool' }
+    runner_os = RUBY_PLATFORM.include?('darwin') ? 'macOS' : 'Linux'
+    tool = runner_os == 'macOS' ? '/usr/bin/tar' : '/usr/bin/bsdtar'
+    Dir.mktmpdir do |directory|
+      temporary = Pathname(directory)/'runner temp'
+      output = Pathname(directory)/'job-env'
+      env = {'RUNNER_OS' => runner_os, 'RUNNER_TEMP' => temporary.to_s, 'GITHUB_ENV' => output.to_s}
+      stdout, stderr, status = Open3.capture3(env, 'bash', '-euo', 'pipefail', '-c', step.fetch('run'))
+      assert status.success?, stdout + stderr
+      assert_equal "MOONSHINE_TEST_BSDTAR=#{tool}\nMOONSHINE_TEST_RPM=#{temporary}/moonshine.rpm\n", output.read
+    end
+  end
+
   def test_daily_workflow_is_read_only_serialized_and_activation_gated
     workflow = YAML.safe_load((ROOT/'.github/workflows/release-update.yml').read)
     assert_equal({'contents' => 'read'}, workflow['permissions'])
