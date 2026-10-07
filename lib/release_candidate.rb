@@ -4,7 +4,7 @@ require_relative '../tools/generate_cask'
 
 module MoonshineCandidate
   extend self
-  ROOT_ENTRIES = %w[.github .gitignore Casks LICENSE README.md lib reference releases tests tools].freeze
+  ROOT_ENTRIES = %w[.github .gitignore Casks LICENSE README.md docs lib reference releases tests tools].freeze
   MAX_FILE = 2 * 1024 * 1024
 
   def tree(root)

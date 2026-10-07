@@ -205,6 +205,74 @@ class ReleaseUpdateTest < Minitest::Test
     end
   end
 
+  def test_release_candidates_preserve_documentation_without_authorizing_documentation_edits
+    fixture do |subject|
+      documents = %w[compatibility operations integration-and-security maintenance development].to_h do |name|
+        ["docs/#{name}.md", "# #{name}\n\nReviewed public guide.\n"]
+      end
+      documents.each do |name, bytes|
+        path = subject.root/name
+        path.dirname.mkpath
+        path.binwrite(bytes)
+      end
+      result = subject.run(prepare: true)
+      assert_equal 'eligible', result['status'], result['reason']
+      candidate = Pathname(result.fetch('candidate').fetch('directory'))
+      begin
+        patch = MoonshineCandidate.patch(subject.root, result['release'])
+        refute patch.keys.any? { |name| name.start_with?('docs/') }
+        documents.each do |name, bytes|
+          assert_equal bytes, (subject.root/name).binread
+          assert_equal bytes, (candidate/name).binread
+          assert_equal bytes, MoonshineCandidate.tree(candidate).fetch(name)
+          ['Changed guide', nil].each do |replacement|
+            assert_raises(MoonshineUpdate::Failure) do
+              MoonshineCandidate.verify_patch(subject.root, result['release'], patch.merge(name => replacement))
+            end
+          end
+        end
+        assert_raises(MoonshineUpdate::Failure) do
+          MoonshineCandidate.verify_patch(subject.root, result['release'], patch.merge('docs/unexpected.md' => 'New guide'))
+        end
+        assert_equal '0.16.1', MoonshineReleases.current(subject.root).release['version']
+      ensure
+        FileUtils.remove_entry_secure(candidate)
+      end
+    end
+  end
+
+  def test_shipping_tree_refuses_symlinked_documentation
+    [:directory, :file].each do |kind|
+      fixture do |subject|
+        if kind == :directory
+          File.symlink(subject.root/'reference', subject.root/'docs')
+        else
+          (subject.root/'docs').mkdir
+          File.symlink(subject.root/'reference/postinstall.sh', subject.root/'docs/compatibility.md')
+        end
+        error = assert_raises(MoonshineUpdate::Failure) { MoonshineCandidate.tree(subject.root) }
+        assert_match(/Symlink in shipping tree/, error.message)
+      end
+    end
+  end
+
+  def test_shipping_tree_refuses_oversized_documentation
+    fixture do |subject|
+      (subject.root/'docs').mkdir
+      (subject.root/'docs/compatibility.md').binwrite('x' * (MoonshineCandidate::MAX_FILE + 1))
+      error = assert_raises(MoonshineUpdate::Failure) { MoonshineCandidate.tree(subject.root) }
+      assert_match(/Unsafe or oversized shipping input/, error.message)
+    end
+  end
+
+  def test_shipping_tree_still_refuses_unknown_root_directories_even_when_empty
+    fixture do |subject|
+      (subject.root/'private-evidence').mkdir
+      error = assert_raises(MoonshineUpdate::Failure) { MoonshineCandidate.tree(subject.root) }
+      assert_match(/Unexpected shipping-tree entry/, error.message)
+    end
+  end
+
   def test_deterministic_candidate_and_exact_patch_refusal
     fixture do |subject|
       before = MoonshineCandidate.tree(subject.root)

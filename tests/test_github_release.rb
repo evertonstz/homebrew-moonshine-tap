@@ -146,6 +146,25 @@ class GitHubReleaseTest < Minitest::Test
     end
   end
 
+  def test_documentation_changes_cannot_be_published_or_merged
+    [:edit, :delete, :mode, :add].product([:publish, :merge]).each do |change, operation|
+      api, controller = operation == :publish ? fixture : merge_fixture
+      api.branch = HEAD
+      name = 'docs/compatibility.md'
+      case change
+      when :edit then api.head_files.fetch(name)['sha'] = 'f' * 40
+      when :delete then api.head_files.delete(name)
+      when :mode then api.head_files.fetch(name)['mode'] = '100755'
+      when :add then api.head_files['docs/unexpected.md'] = {'sha' => 'f' * 40, 'mode' => '100644'}
+      end
+      assert_raises(MoonshineGitHub::Failure) do
+        operation == :publish ? publish(controller) : controller.merge(base: BASE, run_id: 101)
+      end
+      assert_empty api.writes
+      assert_equal HEAD, api.branch
+    end
+  end
+
   def test_wrong_scope_base_settings_and_duplicate_prs_refuse_without_writes
     [:scope, :base, :settings, :duplicates].each do |failure|
       api, controller = fixture
