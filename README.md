@@ -2,8 +2,6 @@
 
 This experimental tap installs Moonshine on eligible Fedora-family Atomic Linux x86_64 hosts. It uses pinned official [Moonshine release RPMs](https://github.com/hgaiser/moonshine/releases) to build a local, host-SELinux-labeled system extension.
 
-[Everton Correia](https://github.com/evertonstz) maintains this user-owned tap. Moonshine and Universal Blue do not maintain or endorse it. The repository is `evertonstz/homebrew-moonshine-tap`, separate from the Moonshine source fork.
-
 Report packaging problems in [this tap's issue tracker](https://github.com/evertonstz/homebrew-moonshine-tap/issues), not Moonshine's upstream tracker. See [Moonshine](https://github.com/hgaiser/moonshine) for application documentation.
 
 ## Requirements and tested coverage
