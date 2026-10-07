@@ -495,7 +495,7 @@ cask "moonshine" do
           ensure!(labels.all? { |p,label| context(p) == label }, 'Refresh changed a base hierarchy SELinux context')
         end
         def valid_unit!(unit)
-          ensure!(unit.match?(/\Amoonshine@[^\/\s]+\.service\z/), 'Invalid saved service instance')
+          ensure!(unit.match?(/\Amoonshine@[^\/\s*?\[\]]+\.service\z/), 'Invalid saved service instance')
         end
         def capture_services
           names = Set.new
@@ -545,6 +545,21 @@ cask "moonshine" do
             end
           end
         end
+        def reset_removed_services(snapshot)
+          snapshot.each do |unit, saved|
+            valid_unit!(unit)
+            observed = command([tool('systemctl'),'show',unit,'--property=LoadState,ActiveState,FragmentPath','--all'],check: false)
+            rows = observed.stdout.lines.map { |line| line.chomp.split('=',2) }
+            ensure!(rows.size == 3 && rows.all? { |row| row.size == 2 } && rows.map(&:first).sort == %w[ActiveState FragmentPath LoadState], "Cannot inspect removed service: #{unit}")
+            properties = rows.to_h
+            missing = properties['LoadState'] == 'not-found' && properties['FragmentPath'].empty?
+            masked = properties['LoadState'] == 'masked' && properties['FragmentPath'] == '/dev/null' && %w[masked masked-runtime].include?(saved['enabled'])
+            ensure!(observed.returncode == 0, "Cannot inspect removed service: #{unit}")
+            ensure!(missing || masked, "Service ownership changed after removal: #{unit}")
+            ensure!(%w[inactive failed].include?(properties['ActiveState']), "Removed service is not stopped: #{unit}")
+            command([tool('systemctl'),'reset-failed',unit]) if properties['ActiveState'] == 'failed'
+          end
+        end
         def check_owned(manifest)
           manifest['host_files'].merge(IMAGE_PATH.to_s=>manifest['image_sha256']).each do |dest,sha|
             path = Pathname(dest)
@@ -573,6 +588,7 @@ cask "moonshine" do
           command([tool('systemctl'),'daemon-reload'])
           scriptlet(manifest,'postremove',0)
           command([tool('udevadm'),'control','--reload'])
+          reset_removed_services(value['services'])
           value.merge!('active'=>nil,'phase'=>'removed')
           save(value)
         end

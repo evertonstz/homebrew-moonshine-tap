@@ -45,7 +45,9 @@ class BoundaryTest < Minitest::Test
       captures=0;refreshes=0;calls=[]
       cmd=->(args,**_) do
         calls << args
-        if args.include?('--property=LoadState')
+        if args.include?('--property=LoadState,ActiveState,FragmentPath')
+          response = "LoadState=not-found\nActiveState=inactive\nFragmentPath=\n"
+        elsif args.include?('--property=LoadState')
           response = file.exist? ? 'loaded' : 'not-found'
         elsif args.include?('--property=FragmentPath')
           response = H::HOST_FILES['/usr/lib/systemd/system/moonshine@.service']
