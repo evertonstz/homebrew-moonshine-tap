@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "scriptlets": {
+    "postinstall": {
+      "interpreter": [
+        "/bin/sh"
+      ],
+      "sha256": "b976646c9a8f1d99222084b2506542b31f81daf2b1d43c65e31a038add770109"
+    },
+    "postremove": {
+      "interpreter": [
+        "/bin/sh"
+      ],
+      "sha256": "91a5bc9bfddc77fa862b70cb2709a4159e8654ef538a917354ff7403cc7615a5"
+    }
+  }
+}

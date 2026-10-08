@@ -8,7 +8,7 @@ module MoonshineTokenGuard
   class Failure < StandardError; end
 
   def conflicts(requested, installed)
-    unless requested.match?(%r{\Aevertonstz/moonshine-tap/moonshine(?:@(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))?\z})
+    unless requested.match?(%r{\Aevertonstz/moonshine-tap/moonshine(?:@(?:untested|(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)))?\z})
       raise Failure, 'Invalid requested Moonshine cask token'
     end
     installed.reject do |name|

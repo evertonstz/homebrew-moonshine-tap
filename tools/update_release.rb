@@ -15,7 +15,9 @@ module MoonshineUpdateCLI
     end
     parser.parse!(argv)
     raise MoonshineUpdate::Failure, parser.banner unless argv.empty? && options[:bsdtar]
-    result = MoonshineUpdate::Updater.new(root: options[:root], client: MoonshineUpdate::HTTP.new(token: ENV['GITHUB_TOKEN']),
+    sha, _, status = Open3.capture3('git', 'rev-parse', 'HEAD')
+    MoonshineUpdate.check(status.success?, 'Cannot bind candidate source commit')
+    result = MoonshineUpdate::Updater.new(source_sha: sha.strip, root: options[:root], client: MoonshineUpdate::HTTP.new(token: ENV['GITHUB_TOKEN']),
                                           inspector: MoonshineUpdate::Contract.new(bsdtar: options[:bsdtar]),
                                           store: MoonshineCandidate::Store.new).run(prepare: options[:prepare])
     puts JSON.pretty_generate(result)

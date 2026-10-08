@@ -15,14 +15,15 @@ module MoonshineReleaseCheck
 
   def run(root:, bsdtar:, client:, packages: nil, compare: false, test_rpm_copy: nil)
     root = Pathname(root)
-    recipes = MoonshineReleases.recipes(root)
+    accepted = MoonshineReleases.recipes(root)
+    recipes = [*accepted, *MoonshineCandidates.retained(root)]
     Dir.mktmpdir('moonshine-retained-rpms-') do |directory|
-      contracts = recipes.each_with_index.map do |recipe, index|
+      contracts = recipes.map do |recipe|
         release = recipe.release
         path = Pathname(packages || directory)/release.fetch('filename')
-        client.download(MoonshineUpdate.download_url(release), path) unless packages
+        client.download(MoonshineUpdate.download_url(release), path) unless packages || path.exist?
         MoonshineUpdate.check(path.file? && !path.symlink?, 'Missing real retained RPM')
-        helper = index.zero? ? root/'lib/moonshine_host.rb' : root/'releases/previous/helper.rb'
+        helper = recipe.helper_path
         output, error, status = Open3.capture3({'RUBYOPT' => nil, 'RUBYLIB' => nil, 'GITHUB_TOKEN' => nil},
                                                RbConfig.ruby, '--disable=rubyopt', '-r', helper.to_s,
                                                '-r', (Pathname(__dir__).parent/'lib/release_update.rb').to_s,
@@ -33,8 +34,8 @@ module MoonshineReleaseCheck
         contract
       end
       if compare
-        MoonshineUpdate.check(contracts.length == 2, 'Release comparison requires two checked retained RPMs')
-        MoonshineUpdate::Contract.compare(*contracts)
+        MoonshineUpdate.check(accepted.length == 2, 'Release comparison requires two checked retained RPMs')
+        contracts.drop(1).each { |contract| MoonshineUpdate::Contract.compare(contracts.first, contract) }
       end
       if test_rpm_copy
         destination = Pathname(test_rpm_copy)

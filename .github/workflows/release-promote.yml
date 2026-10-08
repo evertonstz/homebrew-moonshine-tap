@@ -1,0 +1,50 @@
+name: Moonshine exact candidate promotion gate
+
+'on':
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Exact retained candidate recipe SHA-256
+        required: true
+        type: string
+      expected_stable:
+        description: Current accepted stable recipe SHA-256
+        required: true
+        type: string
+      evidence:
+        description: Native evidence JSON (not package-only CI)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: moonshine-release-update
+  cancel-in-progress: false
+
+jobs:
+  prerequisites:
+    if: >-
+      github.repository == 'evertonstz/homebrew-moonshine-tap' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'evertonstz'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out trusted main, never candidate artifacts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Set up Ruby without write credentials
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          ruby-version: '4.0.6'
+      - name: Refuse missing native policy or mismatched exact evidence before publication
+        env:
+          MOONSHINE_PROMOTION_TARGET: ${{ inputs.target }}
+          MOONSHINE_EXPECTED_STABLE: ${{ inputs.expected_stable }}
+          MOONSHINE_NATIVE_EVIDENCE: ${{ inputs.evidence }}
+        run: ruby --disable=rubyopt tools/promotion_report.rb
+# No write-token or publication job exists while the native evidence policy is unconfigured.

@@ -1,6 +1,6 @@
 # Development and package checks
 
-[README](../README.md) · [Release maintenance](maintenance.md)
+[README](../README.md) · [Release maintenance](maintenance.md) · [Untested channel](candidate-channel.md)
 
 ## Runtime and test dependencies
 
@@ -20,7 +20,7 @@ The mandatory test gate fails when extraction is missing, skipped or excluded by
 
 ## Read-only CI and acceptance limits
 
-Read-only [CI](https://github.com/evertonstz/homebrew-moonshine-tap/actions/workflows/ci.yml) loads all offered casks with Homebrew. It inspects and extracts retained official RPMs and runs regressions without unexpected skips. CI does not install Moonshine on a native host.
+Read-only [CI](https://github.com/evertonstz/homebrew-moonshine-tap/actions/workflows/ci.yml) loads all offered casks with Homebrew. It inspects and extracts retained official RPMs and runs regressions without unexpected skips. Both hosted platforms also load an isolated generated untested cask, check its complete hash-version and official RPM pin, and restore the checkout. CI does not install Moonshine on a native host.
 
 Local YAML, shell and fixture checks do not prove Homebrew loading or GitHub-runner execution. A successful aggregate check alone is insufficient for automatic merging. The controller checks actual mandatory jobs and steps. See [protected merging](maintenance.md#publication-and-protected-merging).
 

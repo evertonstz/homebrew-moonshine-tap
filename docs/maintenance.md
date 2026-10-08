@@ -1,12 +1,12 @@
 # Release maintenance
 
-[README](../README.md) · [Development checks](development.md)
+[README](../README.md) · [Development checks](development.md) · [Untested channel](candidate-channel.md)
 
 ## Release policy
 
 Release automation remains disabled until the owner configures its App and protection settings and completes controlled remote checks. Read-only CI runs independently. See [CI runs](https://github.com/evertonstz/homebrew-moonshine-tap/actions/workflows/ci.yml) for current results.
 
-When enabled, the detector checks daily or on manual request. It downloads official stable RPMs, calculates SHA-256 and checks the current pin. SHA-256 binds the downloaded bytes to a digest. It is not an independent publisher signature. The detector inspects headers, scriptlets, triggers, dependencies, inventory and protected integration content without executing package code.
+When enabled, the detector checks daily, on manual request, or after successful checked-main CI. Eligible recipes update only the untested channel. Stable promotion remains disabled until the native evidence policy and positive publisher are complete. It downloads official stable RPMs, calculates SHA-256 and checks the current pin. SHA-256 binds the downloaded bytes to a digest. It is not an independent publisher signature. The detector inspects headers, scriptlets, triggers, dependencies, inventory and protected integration content without executing package code.
 
 Only the server and WSI binary contents can differ automatically. Packaging changes require review.
 
@@ -30,7 +30,7 @@ App setup, protection changes and activation require separate owner approval.
 
    Grant Contents write, Pull requests write, Actions read, Administration read and mandatory Metadata read. Administration read permits protection inspection only. Do not grant settings-write permission, workflow-write permission or bypass allowances.
 
-   The publisher token requests only Contents and Pull requests write. The merge token also requests Actions and Administration read. Tokens expire, and the pinned action revokes them after each job.
+   The publisher token requests Contents and Pull requests write plus Actions read to check main-triggered CI. The merge token also requests Administration read. Tokens expire, and the pinned action revokes them after each job.
 
 2. Add `MOONSHINE_APP_PRIVATE_KEY` as a repository secret.
 
@@ -40,7 +40,7 @@ App setup, protection changes and activation require separate owner approval.
 
    Enable squash merging. Enable auto-merge availability. Enable automatic deletion of merged branches. Protect `main` with a classic PR rule, administrator enforcement and strict up-to-date checks. Require exactly `Moonshine required validation`, bound to the verified GitHub Actions App ID.
 
-   If you intend unattended acceptance, require PRs with zero mandatory reviews. Disable force pushes. Disable branch deletion. Configure no bypass users, teams or apps. The controller refuses automatic merging for unknown required-check names, uninspectable settings or ruleset-only protection.
+   If you intend unattended untested publication, require PRs with zero mandatory reviews. Owner rollback still requires exact-head owner approval enforced by the controller. Stable promotion is not unattended. Disable force pushes. Disable branch deletion. Configure no bypass users, teams or apps. The controller refuses automatic merging for unknown required-check names, uninspectable settings or ruleset-only protection.
 
 4. Do not start supervised manual tests without separate operational approval.
 
