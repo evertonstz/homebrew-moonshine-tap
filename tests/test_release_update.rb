@@ -15,7 +15,7 @@ class UpdateFixture
     original = Pathname(__dir__).parent
     %w[lib/moonshine_host.rb lib/moonshine_token_guard.rb reference/postinstall.sh reference/postremove.sh].each do |name|
       (@root/name).dirname.mkpath
-      FileUtils.cp(original/name, @root/name)
+      FileUtils.cp(name.start_with?("reference/") ? original/"tests/fixtures/#{File.basename(name)}" : original/name, @root/name)
     end
     current = release('0.16.1', BASELINE)
     helper = @root/'lib/moonshine_host.rb'
@@ -56,6 +56,18 @@ class UpdateFixture
     @change = true
   end
 
+  def lock_stable
+    recipe = MoonshineReleases.current(root)
+    dir = root/'releases/stable'
+    dir.mkpath
+    (dir/'helper.rb').write(recipe.source)
+    recipe.scripts.each { |name, body| (dir/"#{name}.sh").write(body + "\n") }
+    (dir/'release.json').write(JSON.generate('schema' => 1, 'release' => recipe.release,
+                                           'helper_sha256' => Digest::SHA256.hexdigest(recipe.source)))
+    (root/'releases/catalog.json').write(JSON.generate('schema' => 1, 'stable' => 'stable', 'previous' => nil))
+    dir
+  end
+
   def run(prepare: false, store: @store)
     MoonshineUpdate::Updater.new(root: root, client: self, inspector: self, store: store).run(prepare: prepare)
   end
@@ -66,6 +78,53 @@ class ReleaseUpdateTest < Minitest::Test
     Dir.mktmpdir do |directory|
       subject = UpdateFixture.new(directory)
       yield subject
+    end
+  end
+
+  def test_legacy_release_preparation_refuses_locked_stable_without_mutation
+    fixture do |subject|
+      subject.lock_stable
+      before = MoonshineCandidate.tree(subject.root)
+
+      result = subject.run(prepare: true)
+
+      assert_equal 'review_required', result['status']
+      assert_equal 'Locked stable catalog requires candidate-first publication', result['reason']
+      assert_equal before, MoonshineCandidate.tree(subject.root)
+    end
+  end
+
+  def test_invalid_locked_catalog_refuses_before_network_or_helper_execution
+    %i[changed_helper missing_catalog missing_helper invalid_catalog].each do |fault|
+      fixture do |subject|
+        stable = subject.lock_stable
+        sentinel = subject.root/'unexpected-execution'
+        case fault
+        when :changed_helper
+          (stable/'helper.rb').write((stable/'helper.rb').read + "\nFile.write(#{sentinel.to_s.inspect}, 'executed')\n")
+        when :missing_catalog
+          (subject.root/'releases/catalog.json').delete
+        when :missing_helper
+          (stable/'helper.rb').delete
+        when :invalid_catalog
+          (subject.root/'releases/catalog.json').write(JSON.generate('schema' => 1, 'stable' => '../lib', 'previous' => nil))
+        end
+        before = MoonshineCandidate.tree(subject.root)
+        requests = []
+        original = subject.method(:json)
+        subject.define_singleton_method(:json) do |url|
+          requests << url
+          original.call(url)
+        end
+
+        result = subject.run(prepare: true)
+
+        assert_equal 'review_required', result['status'], fault.to_s
+        refute_empty result['reason']
+        assert_empty requests
+        refute sentinel.exist?
+        assert_equal before, MoonshineCandidate.tree(subject.root)
+      end
     end
   end
 
@@ -152,6 +211,31 @@ class ReleaseUpdateTest < Minitest::Test
       subject.data['assets'][0].delete('digest')
       subject.data['assets'][0]['size'] += 1
       assert_equal 'review_required', subject.run['status']
+    end
+  end
+
+  def test_missing_exact_cask_refuses_before_release_requests_without_changing_inputs
+    fixture do |subject|
+      current = MoonshineReleases.current(subject.root).release
+      subject.data['tag_name'] = 'v0.16.1'
+      subject.data['assets'][0].merge!('name' => current['filename'], 'size' => UpdateFixture::BASELINE.bytesize,
+                                      'browser_download_url' => MoonshineUpdate.download_url(current),
+                                      'digest' => "sha256:#{current['sha256']}")
+      (subject.root/'Casks/moonshine@0.16.1.rb').delete
+      before = MoonshineCandidate.tree(subject.root)
+      requests = []
+      original = subject.method(:json)
+      subject.define_singleton_method(:json) do |url|
+        requests << url
+        original.call(url)
+      end
+
+      result = subject.run
+
+      assert_equal 'review_required', result['status']
+      assert_match(/Generated cask is stale: Casks\/moonshine@0\.16\.1\.rb/, result['reason'])
+      assert_empty requests
+      assert_equal before, MoonshineCandidate.tree(subject.root)
     end
   end
 

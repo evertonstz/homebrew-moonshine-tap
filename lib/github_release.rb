@@ -32,8 +32,15 @@ module MoonshineGitHub
     Digest::SHA1.hexdigest("blob #{bytes.bytesize}\0".b + bytes.b)
   end
 
-  def manifest(base, release, asset)
-    {'base_sha' => sha(base), 'release' => MoonshineReleases.metadata(release), 'asset_id' => integer(asset)}
+  def manifest(base, release, asset, recipe: nil, expected_current: nil, operation: 'forward', reason: nil)
+    data = {'base_sha' => sha(base), 'release' => MoonshineReleases.metadata(release), 'asset_id' => integer(asset)}
+    return data unless recipe
+    MoonshineCandidates.identity(recipe)
+    MoonshineCandidates.identity(expected_current) if expected_current
+    check(%w[forward rollback].include?(operation), 'Unsupported candidate publication operation')
+    operation == 'rollback' ? MoonshineCandidates.reason!(reason) : check(reason.nil?, 'Forward publication cannot carry rollback approval')
+    data.merge('recipe_sha256' => recipe, 'source_sha' => base, 'expected_current' => expected_current,
+               'operation' => operation, 'reason' => reason)
   end
 
   def message(data)
@@ -43,8 +50,12 @@ module MoonshineGitHub
   def parse_message(text)
     check(text.is_a?(String) && text.bytesize <= 2048 && text.start_with?(PREFIX), 'Unrecognized release commit')
     value = JSON.parse(text.delete_prefix(PREFIX), max_nesting: 5)
-    check(value.is_a?(Hash) && value.keys.sort == %w[asset_id base_sha release], 'Invalid release commit fields')
-    result = manifest(value['base_sha'], value['release'], value['asset_id'])
+    legacy = %w[asset_id base_sha release]
+    channel = %w[asset_id base_sha expected_current operation reason recipe_sha256 release source_sha]
+    check(value.is_a?(Hash) && [legacy, channel].include?(value.keys.sort), 'Invalid release commit fields')
+    check(!value.key?('source_sha') || value['source_sha'] == value['base_sha'], 'Candidate source is not the trusted base')
+    result = manifest(value['base_sha'], value['release'], value['asset_id'], recipe: value['recipe_sha256'],
+                      expected_current: value['expected_current'], operation: value.fetch('operation', 'forward'), reason: value['reason'])
     check(message(result) == text, 'Noncanonical release commit')
     result
   end
@@ -184,7 +195,24 @@ module MoonshineGitHub
       object, files = tree(data['base_sha'])
       local = MoonshineCandidate.tree(@root)
       MoonshineGitHub.check(files.keys.sort == local.keys.sort && local.all? { |path, bytes| files[path]['sha'] == MoonshineGitHub.blob(bytes) }, 'Checkout differs from trusted Git base')
-      changes = MoonshineCandidate.patch(@root, data['release'])
+      if data['recipe_sha256']
+        current = MoonshineCandidates.catalog(@root)
+        if data['operation'] == 'forward' && current['current']
+          record = current['history'].find { |entry| entry['identity'] == current['current'] }
+          ancestor = record.fetch('source_sha')
+          comparison = get("/compare/#{ancestor}...#{data['base_sha']}")
+          MoonshineGitHub.check(%w[ahead identical].include?(comparison['status']) &&
+            comparison.dig('merge_base_commit', 'sha') == ancestor, 'Candidate source is not forward reviewed-main history')
+        end
+        selection = {root: @root, release: data['release'], source: data['source_sha'], expected_current: data['expected_current'],
+                     operation: data['operation'], target: (data['recipe_sha256'] if data['operation'] == 'rollback'), reason: data['reason']}
+        chosen = data['operation'] == 'rollback' ? MoonshineCandidates.recipe(@root, data['recipe_sha256']) : MoonshineCandidates.build(@root, data['release'])
+        MoonshineGitHub.check(chosen.identity == data['recipe_sha256'], 'Checked candidate recipe differs from trusted inputs')
+        changes = MoonshineCandidates.patch(**selection)
+        MoonshineGitHub.check(!changes.empty?, 'Candidate is already selected; do not publish a loop')
+      else
+        changes = MoonshineCandidate.patch(@root, data['release'])
+      end
       after = files.transform_values(&:dup)
       changes.each do |path, bytes|
         bytes ? after[path] = {'sha' => MoonshineGitHub.blob(bytes), 'mode' => files.dig(path, 'mode') || '100644'} : after.delete(path)
@@ -222,14 +250,15 @@ module MoonshineGitHub
         bypass.values.all? { |value| value == [] }, 'PR protection has bypass allowances')
     end
 
-    def validation!(run, head, number)
-      MoonshineGitHub.check(run.is_a?(Hash) && run['event'] == 'pull_request' && run['status'] == 'completed' &&
+    def validation!(run, head, number = nil)
+      event, branch = number ? ['pull_request', BRANCH] : ['push', 'main']
+      MoonshineGitHub.check(run.is_a?(Hash) && run['event'] == event && run['status'] == 'completed' &&
         run['conclusion'] == 'success' && run['path'] == '.github/workflows/ci.yml' && run['head_sha'] == head &&
-        run['head_branch'] == BRANCH && run.dig('repository', 'full_name') == REPOSITORY &&
+        run['head_branch'] == branch && run.dig('repository', 'full_name') == REPOSITORY &&
         run.dig('head_repository', 'full_name') == REPOSITORY, 'CI identity, conclusion or checked head differs')
       id = MoonshineGitHub.integer(run['id'])
       attempt = MoonshineGitHub.integer(run['run_attempt'])
-      latest = get("/actions/workflows/ci.yml/runs?event=pull_request&head_sha=#{head}&per_page=100")
+      latest = get("/actions/workflows/ci.yml/runs?event=#{event}&head_sha=#{head}&per_page=100")
       MoonshineGitHub.check(latest['total_count'].is_a?(Integer) && latest['total_count'].between?(1, 99) &&
         latest['workflow_runs'].is_a?(Array) && latest['workflow_runs'].first&.values_at('id', 'run_attempt') == [id, attempt],
         'CI was superseded; fresh validation required')
@@ -241,7 +270,8 @@ module MoonshineGitHub
       list.each do |job|
         names = job['name'] == MoonshineCI::REQUIRED_CHECK ? ['Require all prerequisite jobs to succeed'] :
           ['Check source and all generated casks', 'Load every offered token with Homebrew',
-           'Inspect and extract every retained official RPM', 'Run all regressions with mandatory official RPM extraction']
+           'Inspect and extract every retained official RPM', 'Run all regressions with mandatory official RPM extraction',
+           'Validate an isolated untested recipe with Homebrew']
         steps = job['steps']
         MoonshineGitHub.check(steps.is_a?(Array) && names.all? do |name|
           matches = steps.select { |step| step['name'] == name }
@@ -249,7 +279,27 @@ module MoonshineGitHub
         end, 'Required CI steps missing, skipped or unsuccessful')
       end
       # Require CI association with this PR as well as its exact head.
-      MoonshineGitHub.check(run['pull_requests'].is_a?(Array) && run['pull_requests'].map { |pr| pr['number'] } == [number], 'CI is not associated with the expected PR')
+      MoonshineGitHub.check(run['pull_requests'].is_a?(Array) && run['pull_requests'].map { |pr| pr['number'] } == (number ? [number] : []), 'CI is not associated with the expected PR')
+    end
+
+    def checked_main!(base, run_id)
+      base!(base)
+      run = get("/actions/runs/#{MoonshineGitHub.integer(run_id)}")
+      validation!(run, base)
+      base!(base)
+      true
+    end
+
+    def owner_review!(number, head)
+      owner = get('').fetch('owner')
+      MoonshineGitHub.check(owner['login'] == 'evertonstz' && owner['type'] == 'User', 'Unexpected repository owner')
+      owner_id = MoonshineGitHub.integer(owner['id'])
+      reviews = get("/pulls/#{number}/reviews?per_page=100")
+      MoonshineGitHub.check(reviews.is_a?(Array) && reviews.length < 100, 'Incomplete owner review history')
+      own = reviews.select { |review| review.dig('user', 'id') == owner_id && review.dig('user', 'login') == owner['login'] && review.dig('user', 'type') == 'User' }
+      own.each { |review| MoonshineGitHub.integer(review['id']) }
+      last = own.max_by { |review| review['id'] }
+      MoonshineGitHub.check(last && last['state'] == 'APPROVED' && last['commit_id'] == head, 'Exact-head owner approval is required')
     end
 
     def merge(base:, run_id:)
@@ -269,6 +319,7 @@ module MoonshineGitHub
       _, _, after = expected(data)
       head!(head, data, after)
       validation!(run, head, number)
+      owner_review!(number, head) if data['operation'] == 'rollback'
       # Recheck mutable identities and protection immediately before the head-bound merge request.
       base!(base)
       fresh_head = MoonshineGitHub.sha(get("/git/ref/heads/#{BRANCH}").dig('object', 'sha'))
@@ -276,14 +327,16 @@ module MoonshineGitHub
       head!(fresh_head, data, after)
       pull!(get("/pulls/#{number}"), base, head)
       protection!
+      owner_review!(number, head) if data['operation'] == 'rollback'
       result = @api.call('PUT', @prefix + "/pulls/#{number}/merge", {'sha' => head, 'merge_method' => 'squash'})
       MoonshineGitHub.check(result['merged'] == true, 'Protected merge was refused; accepted pins unchanged')
       {'status' => 'merged', 'number' => number, 'head_sha' => head, 'merge_sha' => MoonshineGitHub.sha(result['sha'])}
     end
 
-    def publish(base:, release:, asset:)
+    def publish(base:, release:, asset:, recipe: nil, expected_current: nil, operation: 'forward', reason: nil)
       scope!
-      data = MoonshineGitHub.manifest(base, release, asset)
+      MoonshineGitHub.check(recipe || !MoonshineReleases.snapshot_directories(@root)[:stable], 'Locked stable catalog requires checked candidate identity')
+      data = MoonshineGitHub.manifest(base, release, asset, recipe: recipe, expected_current: expected_current, operation: operation, reason: reason)
       object, changes, after = expected(data)
       pulls = get("/pulls?state=all&head=evertonstz:#{BRANCH}&base=main&per_page=100")
       MoonshineGitHub.check(pulls.is_a?(Array) && pulls.length < 100, 'Incomplete PR history')
@@ -319,7 +372,12 @@ module MoonshineGitHub
         "Asset #{asset}: #{MoonshineUpdate.download_url(data['release'])}\n" +
         "Old SHA-256: #{old['sha256']}\nNew SHA-256: #{data['release']['sha256']}\n\n" +
         'Package validation only. No new host installation, streaming, downgrade, data compatibility or OS-update acceptance. Older binaries may lack security fixes.'
-      pr = post('/pulls', {'title' => "Moonshine #{data['release']['version']}", 'head' => BRANCH, 'base' => 'main', 'body' => body, 'maintainer_can_modify' => false})
+      if recipe
+        body = "Untested #{operation}: #{expected_current || 'none'} -> #{recipe}.\n" + body + "\nStable and accepted predecessor recipes do not change."
+        body += "\nOwner reason: #{reason}" if reason
+      end
+      title = recipe ? "Moonshine untested #{operation} #{data['release']['version']}+#{recipe}" : "Moonshine #{data['release']['version']}"
+      pr = post('/pulls', {'title' => title, 'head' => BRANCH, 'base' => 'main', 'body' => body, 'maintainer_can_modify' => false})
       # The create response may not contain a computed commit count yet.
       pr = get("/pulls/#{MoonshineGitHub.integer(pr['number'])}")
       pull!(pr, base, head)

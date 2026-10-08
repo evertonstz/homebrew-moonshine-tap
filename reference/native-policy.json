@@ -1,0 +1,5 @@
+{
+  "schema": 1,
+  "state": "unconfigured",
+  "reason": "The required native host matrix and evidence provenance have not been selected. Package checks and owner PR approval alone cannot authorize stable promotion."
+}

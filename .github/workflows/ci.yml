@@ -61,7 +61,7 @@ jobs:
       - name: Check source and all generated casks
         run: |
           ruby -e 'Dir.glob("{Casks,lib,releases,tools,tests}/**/*.rb").sort.each { |path| abort "Ruby syntax failed: #{path}" unless system(RbConfig.ruby, "-c", path) }'
-          for script in reference/*.sh releases/previous/*.sh; do
+          for script in tests/fixtures/*.sh releases/{stable,previous}/*.sh; do
             if test -f "$script"; then sh -n "$script"; fi
           done
           ruby tools/generate_cask.rb --check
@@ -78,6 +78,10 @@ jobs:
           ruby tools/check_releases.rb --bsdtar "$MOONSHINE_TEST_BSDTAR" --test-rpm-copy "$MOONSHINE_TEST_RPM" "${args[@]}"
       - name: Run all regressions with mandatory official RPM extraction
         run: ruby tools/run_tests.rb --no-skips
+      - name: Validate an isolated untested recipe with Homebrew
+        env:
+          MOONSHINE_CI_TAP: ${{ steps.homebrew.outputs.tap-name }}
+        run: ruby tools/check_candidate.rb --brew "$(command -v brew)" --tap "$MOONSHINE_CI_TAP" --bsdtar "$MOONSHINE_TEST_BSDTAR"
 
   required:
     name: Moonshine required validation

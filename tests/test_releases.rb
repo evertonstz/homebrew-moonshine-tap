@@ -2,9 +2,11 @@ require 'minitest/autorun'
 require 'tmpdir'
 require 'fileutils'
 require 'json'
+require_relative '../lib/moonshine_host'
 require_relative '../lib/release_catalog'
 require_relative '../lib/moonshine_token_guard'
 require_relative '../tools/generate_cask'
+require_relative '../tools/lock_recipes'
 
 class ReleaseCatalogTest < Minitest::Test
   R = MoonshineReleases
@@ -15,7 +17,7 @@ class ReleaseCatalogTest < Minitest::Test
       root = Pathname(directory)
       %w[lib/moonshine_host.rb lib/moonshine_token_guard.rb reference/postinstall.sh reference/postremove.sh].each do |name|
         (root/name).dirname.mkpath
-        FileUtils.cp(ROOT/name, root/name)
+        FileUtils.cp(name.start_with?("reference/") ? ROOT/"tests/fixtures/#{File.basename(name)}" : ROOT/name, root/name)
       end
       yield root
     end
@@ -29,6 +31,188 @@ class ReleaseCatalogTest < Minitest::Test
     latest = R.current(root)
     source = latest.source.sub(/^  RELEASE = [^\n]+\.freeze$/, "  RELEASE = #{release(version).inspect}.freeze")
     R.save_previous(root, R::Recipe.new(release: release(version), source: source, scripts: latest.scripts))
+  end
+
+  def lock_stable(root)
+    recipe = R.current(root)
+    dir = root/'releases/stable'
+    dir.mkpath
+    (dir/'helper.rb').write(recipe.source)
+    recipe.scripts.each { |name, body| (dir/"#{name}.sh").write(body + "\n") }
+    (dir/'release.json').write(JSON.generate('schema' => 1, 'release' => recipe.release,
+                                           'helper_sha256' => Digest::SHA256.hexdigest(recipe.source)))
+    (root/'releases/catalog.json').write(JSON.generate('schema' => 1, 'stable' => 'stable',
+                                                      'previous' => (root/'releases/previous').exist? ? 'previous' : nil))
+  end
+
+  def freeze_outputs(root)
+    recipes = R.recipes(root)
+    outputs = MoonshineCask.outputs(root: root)
+    recipes.each_with_index do |recipe, index|
+      slot = index.zero? ? 'stable' : 'previous'
+      dir = root/'releases'/slot
+      dir.mkpath
+      token = index.zero? ? 'moonshine' : "moonshine@#{recipe.release['version']}"
+      template = outputs.fetch("Casks/#{token}.rb")
+      template = template.sub("cask #{token.inspect} do", 'cask "__MOONSHINE_TOKEN__" do')
+      template = template.sub("  version #{recipe.release['version'].inspect}", '  version "__MOONSHINE_VERSION__"')
+      template = template.sub(/^  conflicts_with cask: \[[^\n]*\]$/, '  conflicts_with cask: [__MOONSHINE_CONFLICTS__]')
+      template = template.sub("\"evertonstz/moonshine-tap/#{token}\"", '"evertonstz/moonshine-tap/__MOONSHINE_TOKEN__"')
+      (dir/'helper.rb').write(recipe.source)
+      (dir/'cask.rb').write(template)
+      recipe.scripts.each { |name, body| (dir/"#{name}.sh").write(body + "\n") }
+      fields = {'schema' => 2, 'release' => recipe.release,
+                'helper_sha256' => Digest::SHA256.hexdigest(recipe.source),
+                'template_sha256' => Digest::SHA256.hexdigest(template),
+                'script_sha256' => recipe.scripts.sort.to_h.transform_values { |body| Digest::SHA256.hexdigest(body) }}
+      fields['recipe_sha256'] = Digest::SHA256.hexdigest(JSON.generate(fields.sort.to_h))
+      (dir/'release.json').write(JSON.generate(fields))
+    end
+    (root/'releases/catalog.json').write(JSON.generate('schema' => 1, 'stable' => 'stable',
+                                                      'previous' => recipes.length == 2 ? 'previous' : nil))
+  end
+
+  def test_lock_builder_freezes_all_offered_recipes_without_changing_any_input
+    fixture do |root|
+      predecessor(root)
+      accepted = MoonshineCask.generate(root: root)
+      before = MoonshineCandidate.tree(root)
+      changes = MoonshineRecipeLock.patch(root: root)
+      assert_equal before, MoonshineCandidate.tree(root)
+      refute changes.keys.any? { |name| name.start_with?('Casks/', 'lib/', 'reference/') }
+      changes.each do |name, bytes|
+        path = root/name
+        path.dirname.mkpath
+        path.binwrite(bytes)
+      end
+      assert_equal accepted, MoonshineCask.outputs(root: root)
+      assert R.current(root).template
+      assert R.previous(root).template
+      assert_match(/\A[0-9a-f]{64}\z/, R.current(root).identity)
+      assert_equal (root/'releases/stable/helper.rb').expand_path, R.current(root).helper_path
+      locked = MoonshineCandidate.tree(root)
+      assert_raises(R::Failure) { MoonshineRecipeLock.patch(root: root) }
+      assert_equal locked, MoonshineCandidate.tree(root)
+    end
+  end
+
+  def test_lock_builder_refuses_missing_offered_cask_without_writing
+    fixture do |root|
+      MoonshineCask.generate(root: root)
+      (root/'Casks/moonshine@0.16.1.rb').delete
+      before = MoonshineCandidate.tree(root)
+      assert_raises(RuntimeError) { MoonshineRecipeLock.patch(root: root) }
+      assert_equal before, MoonshineCandidate.tree(root)
+      refute (root/'releases').exist?
+    end
+  end
+
+  def test_complete_snapshots_preserve_token_guard_and_all_stable_outputs
+    fixture do |root|
+      predecessor(root)
+      accepted = MoonshineCask.generate(root: root)
+      freeze_outputs(root)
+      guard = root/'lib/moonshine_token_guard.rb'
+      guard.write(guard.read + "\n# unaccepted candidate guard change\n")
+
+      assert_equal accepted, MoonshineCask.outputs(root: root)
+      MoonshineCask.generate(root: root, check: true)
+    end
+  end
+
+  def test_complete_snapshots_ignore_changed_development_compiler_without_execution
+    fixture do |root|
+      predecessor(root)
+      MoonshineCask.generate(root: root)
+      freeze_outputs(root)
+      sentinel = root/'unexpected-development-execution'
+      helper = root/'lib/moonshine_host.rb'
+      helper.write(helper.read + "\nFile.write(#{sentinel.to_s.inspect}, 'executed')\n")
+      (root/'tools').mkpath
+      FileUtils.cp(ROOT/'lib/release_catalog.rb', root/'lib/release_catalog.rb')
+      FileUtils.cp(ROOT/'lib/candidate_catalog.rb', root/'lib/candidate_catalog.rb')
+      compiler = (ROOT/'tools/generate_cask.rb').read.sub('["libarchive", "erofs-utils"]', '["unaccepted-dependency"]')
+      assert_includes compiler, '["unaccepted-dependency"]'
+      (root/'tools/generate_cask.rb').write(compiler)
+
+      output, error, status = Open3.capture3({'RUBYOPT' => nil, 'RUBYLIB' => nil}, RbConfig.ruby,
+                                           (root/'tools/generate_cask.rb').to_s, '--check')
+      assert status.success?, output + error
+      refute sentinel.exist?
+    end
+  end
+
+  def test_complete_snapshot_digest_refuses_template_and_script_drift_without_execution
+    %w[cask.rb postinstall.sh release.json].each do |name|
+      fixture do |root|
+        MoonshineCask.generate(root: root)
+        freeze_outputs(root)
+        before = root.glob('**/*').select(&:file?).to_h { |path| [path.to_s, path.binread] }
+        path = root/'releases/stable'/name
+        if name == 'release.json'
+          data = JSON.parse(path.read)
+          data['recipe_sha256'] = '0' * 64
+          path.write(JSON.generate(data))
+        else
+          path.write(path.read + "\n# unexpected change\n")
+        end
+        changed = root.glob('**/*').select(&:file?).to_h { |file| [file.to_s, file.binread] }
+
+        assert_raises(R::Failure) { MoonshineCask.outputs(root: root) }
+        assert_equal changed, root.glob('**/*').select(&:file?).to_h { |file| [file.to_s, file.binread] }
+        refute_equal before, changed
+      end
+    end
+  end
+
+  def test_complete_snapshot_loading_never_executes_its_helper
+    fixture do |root|
+      MoonshineCask.generate(root: root)
+      freeze_outputs(root)
+      dir = root/'releases/stable'
+      sentinel = root/'unexpected-snapshot-execution'
+      old_source = (dir/'helper.rb').read
+      source = old_source + "\nFile.write(#{sentinel.to_s.inspect}, 'executed')\n"
+      (dir/'helper.rb').write(source)
+      embedded = ->(text) { text.lines.map { |line| line.strip.empty? ? "\n" : '    ' + line }.join }
+      template = (dir/'cask.rb').read.sub(embedded.call(old_source)) { embedded.call(source) }
+      (dir/'cask.rb').write(template)
+      fields = JSON.parse((dir/'release.json').read).reject { |key, _| key == 'recipe_sha256' }
+      fields['helper_sha256'] = Digest::SHA256.hexdigest(source)
+      fields['template_sha256'] = Digest::SHA256.hexdigest(template)
+      fields['recipe_sha256'] = Digest::SHA256.hexdigest(JSON.generate(fields.sort.to_h))
+      (dir/'release.json').write(JSON.generate(fields))
+
+      assert_equal source, R.current(root).source
+      assert_includes MoonshineCask.outputs(root: root).fetch('Casks/moonshine.rb'), 'unexpected-snapshot-execution'
+      refute sentinel.exist?
+    end
+  end
+
+  def test_development_helper_changes_do_not_rewrite_locked_stable_outputs
+    fixture do |root|
+      predecessor(root)
+      accepted = MoonshineCask.generate(root: root)
+      lock_stable(root)
+      helper = root/'lib/moonshine_host.rb'
+      helper.write(helper.read.sub("IMAGE_NAME = 'moonshine-homebrew'", "IMAGE_NAME = 'unaccepted-development'"))
+
+      assert_equal accepted, MoonshineCask.outputs(root: root)
+      MoonshineCask.generate(root: root, check: true)
+      assert_equal '0.16.1', R.current(root).release['version']
+      assert_equal '0.16.0', R.previous(root).release['version']
+    end
+  end
+
+  def test_legacy_rotation_refuses_locked_stable_without_changing_inputs
+    fixture do |root|
+      predecessor(root)
+      lock_stable(root)
+      before = root.glob('**/*').select(&:file?).to_h { |path| [path.to_s, path.binread] }
+
+      assert_raises(R::Failure) { R.rotate(root, release('0.16.2')) }
+      assert_equal before, root.glob('**/*').select(&:file?).to_h { |path| [path.to_s, path.binread] }
+    end
   end
 
   def test_current_metadata_has_one_source_of_truth
@@ -282,7 +466,7 @@ class VersionSwitchTest < Minitest::Test
       source_root = Pathname(__dir__).parent
       %w[lib/moonshine_host.rb lib/moonshine_token_guard.rb reference/postinstall.sh reference/postremove.sh].each do |name|
         (root/name).dirname.mkpath
-        FileUtils.cp(source_root/name, root/name)
+        FileUtils.cp(name.start_with?("reference/") ? source_root/"tests/fixtures/#{File.basename(name)}" : source_root/name, root/name)
       end
       current = MoonshineReleases.current(root)
       old = {'version' => '0.16.0', 'sha256' => 'b' * 64, 'filename' => 'moonshine-0.16.0-1.x86_64.rpm'}

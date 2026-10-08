@@ -1,0 +1,15 @@
+{
+  "schema": 2,
+  "release": {
+    "filename": "moonshine-0.16.1-1.x86_64.rpm",
+    "sha256": "9540ae5b88828bb3b8c442eb4794644aceb66fa4b623afc65ea0f29146fae267",
+    "version": "0.16.1"
+  },
+  "helper_sha256": "d36a0cfe127d5447c49599fb734b4f89b8c6e0702db1eea626026401bf6307c5",
+  "template_sha256": "1c730e4f7e6867969770c8f99abd435e4369e9b0cfa08771fe0bbf3adbef674b",
+  "script_sha256": {
+    "postinstall": "b976646c9a8f1d99222084b2506542b31f81daf2b1d43c65e31a038add770109",
+    "postremove": "91a5bc9bfddc77fa862b70cb2709a4159e8654ef538a917354ff7403cc7615a5"
+  },
+  "recipe_sha256": "5c5cda9071060f559f1b68d7034d71e126d662ef566b051b00cd1c904a394e7d"
+}

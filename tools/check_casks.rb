@@ -18,9 +18,10 @@ module MoonshineCaskCheck
     recipes = MoonshineReleases.recipes(root)
     output, error, status = runner.call([brew, 'readall', '--aliases', '--os=all', '--arch=all', tap])
     MoonshineUpdate.check(status.success?, "Homebrew readall failed: #{error.strip}")
-    tokens = ['moonshine', *recipes.map { |recipe| "moonshine@#{recipe.release['version']}" }]
+    candidate = MoonshineCandidates.recipe(root)
+    tokens = MoonshineReleases.tokens(root)
     tokens.each do |token|
-      recipe = token == 'moonshine' ? recipes.first : recipes.find { |item| token == "moonshine@#{item.release['version']}" }
+      recipe = token == 'moonshine@untested' ? candidate : token == 'moonshine' ? recipes.first : recipes.find { |item| token == "moonshine@#{item.release['version']}" }
       output, error, status = runner.call([brew, 'info', '--cask', '--json=v2', "#{tap}/#{token}"])
       MoonshineUpdate.check(status.success? && output.bytesize <= 2 * 1024 * 1024,
                             "Homebrew cask loading failed: #{token}: #{error.strip}")
@@ -30,7 +31,7 @@ module MoonshineCaskCheck
       cask = casks.first
       release = recipe.release
       MoonshineUpdate.check(cask['token'] == token && cask['full_token'] == "#{tap}/#{token}" &&
-                            cask['version'] == release['version'] && cask['sha256'] == release['sha256'] &&
+                            cask['version'] == (token == 'moonshine@untested' ? "#{release['version']}+#{recipe.identity}" : release['version']) && cask['sha256'] == release['sha256'] &&
                             cask['url'] == MoonshineUpdate.download_url(release), 'Homebrew loaded an unexpected cask identity or RPM pin')
     end
     {'readall_executed' => true, 'tokens_loaded' => tokens, 'host_installation' => false}

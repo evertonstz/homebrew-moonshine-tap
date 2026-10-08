@@ -5,6 +5,7 @@ require 'openssl'
 require 'tmpdir'
 require_relative 'release_catalog'
 require_relative 'moonshine_host' unless defined?(MoonshineHost::RELEASE)
+require_relative '../tools/generate_cask'
 
 module MoonshineUpdate
   extend self
@@ -174,8 +175,8 @@ module MoonshineUpdate
   end
 
   class Updater
-    def initialize(root:, client:, inspector:, store: nil)
-      @root, @client, @inspector, @store = root, client, inspector, store
+    def initialize(root:, client:, inspector:, store: nil, source_sha: nil)
+      @root, @client, @inspector, @store, @source_sha = root, client, inspector, store, source_sha
     end
 
     def select(data, current)
@@ -207,7 +208,14 @@ module MoonshineUpdate
     end
 
     def run(prepare: false)
-      current = MoonshineReleases.current(@root).release
+      begin
+        MoonshineCask.generate(root: @root, check: true)
+      rescue RuntimeError => e
+        raise Failure, "Release catalog validation failed: #{e.message}"
+      end
+      accepted = MoonshineReleases.current(@root)
+      channel = !accepted.template.nil?
+      current = channel ? MoonshineReleases.development(@root).release : accepted.release
       outcome, asset = select(@client.json(API), current)
       return {'status' => outcome, 'current' => current} unless asset
       Dir.mktmpdir('moonshine-update-') do |temporary|
@@ -224,16 +232,27 @@ module MoonshineUpdate
         release = MoonshineReleases.metadata(draft.merge('sha256' => digest))
         if release['version'] == current['version']
           MoonshineUpdate.check(release == current, 'Pinned official asset changed; review required')
-          return {'status' => 'unchanged', 'current' => current}
+          return {'status' => 'unchanged', 'current' => current} unless channel
         end
         baseline = @inspector.inspect(baseline_path, current)
         candidate = @inspector.inspect(candidate_path, release)
         Contract.compare(baseline, candidate)
         report = {'status' => 'eligible', 'current' => current, 'release' => release, 'asset_id' => asset['id'],
                   'limits' => 'Package comparison only; no host installation, downgrade or streaming acceptance.'}
+        if channel
+          selected = MoonshineCandidates.build(@root, release)
+          expected = MoonshineCandidates.catalog(@root)['current']
+          if selected.identity == expected
+            return {'status' => 'unchanged', 'current' => current}
+          end
+          MoonshineCandidates.source_sha(@source_sha)
+          changes = MoonshineCandidates.patch(root: @root, release: release, source: @source_sha, expected_current: expected)
+          MoonshineUpdate.check(!changes.empty?, 'Candidate patch is unexpectedly empty')
+          report.merge!('recipe_sha256' => selected.identity, 'source_sha' => @source_sha, 'expected_current' => expected, 'operation' => 'forward')
+        end
         if prepare
           MoonshineUpdate.check(@store, 'Candidate preparation requires an explicit disposable-tree adapter')
-          report['candidate'] = @store.prepare(@root, release)
+          report['candidate'] = channel ? @store.prepare_channel(@root, release: release, source: @source_sha, expected_current: expected) : @store.prepare(@root, release)
         end
         report
       end

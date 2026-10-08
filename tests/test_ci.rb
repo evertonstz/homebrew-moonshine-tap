@@ -85,14 +85,17 @@ class CIValidationTest < Minitest::Test
     assert_equal 'moonshine-release-update', workflow.dig('concurrency', 'group')
     job = workflow.dig('jobs', 'detect')
     assert_includes job['if'], "vars.MOONSHINE_RELEASE_UPDATES_ENABLED == 'true'"
-    assert_includes job['if'], "github.event_name == 'workflow_dispatch' || vars.MOONSHINE_RELEASE_SCHEDULE_ENABLED == 'true'"
+    assert_includes job['if'], "github.event_name == 'workflow_dispatch'"
+    assert_includes job['if'], "github.event_name == 'schedule' && vars.MOONSHINE_RELEASE_SCHEDULE_ENABLED == 'true'"
+    assert_includes job['if'], "github.event.workflow_run.event == 'push'"
+    assert_includes job['if'], "github.event.workflow_run.head_repository.full_name == github.repository"
     assert_includes job['if'], "github.ref == 'refs/heads/main'"
     assert_includes job['if'], "github.repository == 'evertonstz/homebrew-moonshine-tap'"
     job['steps'].select { |step| step['uses'] }.each do |step|
       assert_match(/\A[^@]+@[0-9a-f]{40}\z/, step['uses'])
     end
     checkout = job['steps'].first
-    assert_equal '${{ github.sha }}', checkout.dig('with', 'ref')
+    assert_equal "${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}", checkout.dig('with', 'ref')
     assert_equal false, checkout.dig('with', 'persist-credentials')
     text = YAML.dump(job)
     refute_includes text, 'secrets.'
@@ -187,7 +190,7 @@ class CaskLoadingCheckTest < Minitest::Test
       root = Pathname(directory)
       %w[lib/moonshine_host.rb reference/postinstall.sh reference/postremove.sh].each do |name|
         (root/name).dirname.mkpath
-        FileUtils.cp(ROOT/name, root/name)
+        FileUtils.cp(name.start_with?("reference/") ? ROOT/"tests/fixtures/#{File.basename(name)}" : ROOT/name, root/name)
       end
       if previous
         latest = MoonshineReleases.current(root)

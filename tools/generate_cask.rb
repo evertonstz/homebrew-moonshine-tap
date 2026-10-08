@@ -1,5 +1,4 @@
 #!/usr/bin/env ruby
-require_relative '../lib/moonshine_host'
 require_relative '../lib/release_catalog'
 module MoonshineCask
   extend self
@@ -10,6 +9,24 @@ module MoonshineCask
     raise 'Unknown generated cask token' unless tokens.include?(token)
     source = recipe.source
     release = recipe.release
+    if recipe.template
+      MoonshineReleases.validate_template(recipe.template, release, source)
+      fields = MoonshineReleases.recipe_fields(release, source, recipe.scripts, recipe.template, approvals: recipe.approvals)
+      MoonshineReleases.check(recipe.identity == MoonshineReleases.recipe_digest(fields), 'Frozen recipe identity differs')
+      version = release['version']
+      if token == 'moonshine@untested'
+        url = "https://github.com/hgaiser/moonshine/releases/download/v#{version}/#{release['filename']}"
+        MoonshineReleases.check(recipe.template.include?("  url \"#{url}\"\n"), 'Untested recipe must pin its upstream URL independently')
+        version = "#{version}+#{recipe.identity}"
+      end
+      text = recipe.template.gsub('__MOONSHINE_TOKEN__', token)
+        .gsub('__MOONSHINE_VERSION__', version)
+        .gsub('__MOONSHINE_CONFLICTS__', (tokens - [token]).map(&:inspect).join(', '))
+      if token == 'moonshine@untested'
+        text = text.sub("  caveats <<~EOS\n", "  caveats <<~EOS\n    Opt-in untested integration recipe. Package checks alone do not establish native acceptance.\n")
+      end
+      return text
+    end
     guard = MoonshineReleases.read_file(Pathname(root)/'lib/moonshine_token_guard.rb', MoonshineReleases::MAX_SOURCE)
     guard_embedded = guard.lines.map { |line| line.strip.empty? ? "\n" : '    '+line }.join
     conflicts = (tokens - [token]).map(&:inspect).join(', ')
@@ -77,9 +94,10 @@ module MoonshineCask
   end
   def outputs(root: ROOT)
     recipes = MoonshineReleases.recipes(root)
-    tokens = ['moonshine', *recipes.map { |recipe| "moonshine@#{recipe.release['version']}" }]
+    candidate = MoonshineCandidates.recipe(root)
+    tokens = ['moonshine', *recipes.map { |recipe| "moonshine@#{recipe.release['version']}" }, *('moonshine@untested' if candidate)]
     tokens.to_h do |token|
-      recipe = token == 'moonshine' ? recipes.first : recipes.find { |entry| token == "moonshine@#{entry.release['version']}" }
+      recipe = token == 'moonshine@untested' ? candidate : token == 'moonshine' ? recipes.first : recipes.find { |entry| token == "moonshine@#{entry.release['version']}" }
       ["Casks/#{token}.rb", render(recipe: recipe, token: token, tokens: tokens, root: root)]
     end
   end

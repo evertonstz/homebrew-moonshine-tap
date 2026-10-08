@@ -9,7 +9,7 @@ module MoonshineGitHubCLI
     MoonshineGitHub.check(env['GITHUB_REPOSITORY'] == MoonshineGitHub::REPOSITORY &&
       env['MOONSHINE_RELEASE_UPDATES_ENABLED'] == 'true', 'Release automation is not activated for this repository')
     if argv.first == 'publish'
-      MoonshineGitHub.check(%w[schedule workflow_dispatch].include?(env['GITHUB_EVENT_NAME']) &&
+      MoonshineGitHub.check(%w[schedule workflow_dispatch workflow_run].include?(env['GITHUB_EVENT_NAME']) &&
         env['GITHUB_REF'] == 'refs/heads/main', 'Publication requires a default-branch detection run')
     else
       MoonshineGitHub.check(env['GITHUB_EVENT_NAME'] == 'workflow_run', 'Merge requires CI completion metadata')
@@ -24,8 +24,15 @@ module MoonshineGitHubCLI
     base = MoonshineGitHub.sha(base.strip)
     result = if argv.first == 'publish'
       MoonshineGitHub.check(base == env['MOONSHINE_BASE_SHA'], 'Detection and publisher baselines differ')
+      controller.checked_main!(base, Integer(env.fetch('MOONSHINE_SOURCE_CI_RUN_ID'), 10)) if env['GITHUB_EVENT_NAME'] == 'workflow_run'
+      selection = {}
+      if env['MOONSHINE_RECIPE_SHA256'] && !env['MOONSHINE_RECIPE_SHA256'].empty?
+        selection = {recipe: env['MOONSHINE_RECIPE_SHA256'], expected_current: env['MOONSHINE_EXPECTED_CURRENT'].to_s.empty? ? nil : env['MOONSHINE_EXPECTED_CURRENT'],
+                     operation: env.fetch('MOONSHINE_OPERATION', 'forward'), reason: env['MOONSHINE_ROLLBACK_REASON'].to_s.empty? ? nil : env['MOONSHINE_ROLLBACK_REASON']}
+        MoonshineGitHub.check(env['GITHUB_EVENT_NAME'] == 'workflow_dispatch' && env['GITHUB_ACTOR'] == 'evertonstz', 'Only the owner can request rollback') if selection[:operation] == 'rollback'
+      end
       controller.publish(base: base, release: JSON.parse(env.fetch('MOONSHINE_RELEASE'), max_nesting: 5),
-        asset: Integer(env.fetch('MOONSHINE_ASSET_ID'), 10))
+        asset: Integer(env.fetch('MOONSHINE_ASSET_ID'), 10), **selection)
     else
       controller.merge(base: base, run_id: Integer(env.fetch('MOONSHINE_CI_RUN_ID'), 10))
     end

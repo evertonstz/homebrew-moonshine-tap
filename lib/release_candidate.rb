@@ -32,6 +32,8 @@ module MoonshineCandidate
     release = MoonshineReleases.metadata(release)
     before = tree(root)
     MoonshineCask.generate(root: root, check: true)
+    MoonshineUpdate.check(MoonshineReleases.snapshot_directories(root)[:stable].nil?,
+                          'Locked stable catalog requires candidate-first publication')
     current = MoonshineReleases.recipes(root).first
     MoonshineUpdate.check((MoonshineReleases.version(release['version']) <=> MoonshineReleases.version(current.release['version'])) == 1,
                           'Candidate release must be newer')
@@ -64,6 +66,27 @@ module MoonshineCandidate
   class Store
     def initialize(parent: nil)
       @parent = parent
+    end
+
+    def prepare_channel(root, **selection)
+      changes = MoonshineCandidates.patch(root: root, **selection)
+      baseline = MoonshineCandidate.tree(root)
+      directory = Dir.mktmpdir('moonshine-untested-', @parent)
+      begin
+        target = Pathname(directory)
+        after = baseline.merge(changes).reject { |_, bytes| bytes.nil? }
+        after.each do |name, bytes|
+          path = target/name
+          path.dirname.mkpath
+          path.binwrite(bytes)
+        end
+        MoonshineCask.generate(root: target, check: true)
+        MoonshineUpdate.check(MoonshineCandidate.tree(target) == after.sort.to_h, 'Candidate reconstruction differs')
+        {'directory' => directory, 'paths' => changes.keys, 'patch_sha256' => Digest::SHA256.hexdigest(JSON.generate(changes))}
+      rescue StandardError
+        FileUtils.remove_entry_secure(directory)
+        raise
+      end
     end
 
     def prepare(root, release)

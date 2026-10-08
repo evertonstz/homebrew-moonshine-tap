@@ -31,14 +31,41 @@ module MoonshineHost
     '/usr/share/polkit-1/rules.d/50-moonshine-inhibit-sleep.rules'=>'/etc/polkit-1/rules.d/50-moonshine-inhibit-sleep.rules'}.freeze
   DROPIN = '/etc/systemd/system/moonshine@.service.d/10-homebrew-sysext.conf'
   DROPIN_CONTENT = "[Unit]\nRequires=systemd-sysext.service\nAfter=systemd-sysext.service\n"
-  # Review binds the role, exact interpreter arguments and normalized package bytes.
-  APPROVED_SCRIPTLETS = {"postinstall" => {"interpreter" => ["/bin/sh"], "sha256" => "b976646c9a8f1d99222084b2506542b31f81daf2b1d43c65e31a038add770109"}, "postremove" => {"interpreter" => ["/bin/sh"], "sha256" => "91a5bc9bfddc77fa862b70cb2709a4159e8654ef538a917354ff7403cc7615a5"}}.freeze
-  APPROVED_SCRIPTLETS.each_value do |entry|
-    entry.fetch('interpreter').each(&:freeze)
-    entry.fetch('interpreter').freeze
-    entry.fetch('sha256').freeze
-    entry.freeze
-  end
+  # Embed reviewed scriptlets so installed hooks do not read references from the tap.
+  REVIEWED_SCRIPTS = {
+    'postinstall' => <<~'POSTINSTALL'.chomp,
+      #!/bin/sh
+      # Post-install script for nfpm-generated packages (.deb/.rpm/.pkg.tar.zst).
+      # Runs as root at package install time.
+
+      # Reload udev rules and apply them to already-present devices.
+      udevadm control --reload || true
+      udevadm trigger || true
+
+      # The 'moonshine' group used by the suspend-inhibit polkit rule
+      # (dist/50-moonshine-inhibit-sleep.rules) is defined by the shipped sysusers.d
+      # drop-in (dist/moonshine-sysusers.conf -> /usr/lib/sysusers.d/moonshine.conf).
+      # Running systemd-sysusers applies that drop-in so the group exists immediately
+      # instead of only after the next boot.
+      systemd-sysusers 2>/dev/null || true
+
+      # Load the virtual input modules now so no reboot is required
+      # (dist/moonshine-modules.conf takes care of subsequent boots).
+      modprobe uinput || true
+      modprobe uhid || true
+
+      echo "moonshine: enable for your user with:"
+      echo "  sudo loginctl enable-linger <user>   # optional, for headless use"
+      echo "  sudo systemctl enable --now moonshine@<user>"
+    POSTINSTALL
+    'postremove' => <<~'POSTREMOVE'.chomp
+      #!/bin/sh
+      # Post-remove script for nfpm-generated packages (.deb/.rpm/.pkg.tar.zst).
+
+      # The udev rule was removed with the package; reload so it stops applying.
+      udevadm control --reload || true
+    POSTREMOVE
+  }.freeze
   class Failure < StandardError; end
   Result = Struct.new(:stdout, :stderr, :returncode, keyword_init: true)
   def ensure!(condition, message)
@@ -138,10 +165,8 @@ module MoonshineHost
       parents = expected.flat_map { |p| Pathname(p).ascend.to_a.drop(1).map(&:to_s) }.to_set
       MoonshineHost.ensure!(files.all? { |p,m| (m & 0170000) == 0100000 || parents.include?(p) }, 'RPM contains an unexpected directory')
       [[1024,1086,'postinstall'],[1026,1088,'postremove']].each do |tag,prog,name|
-        approval = APPROVED_SCRIPTLETS.fetch(name)
-        body = tags.fetch(tag, '')
-        MoonshineHost.ensure!(body.is_a?(String) && Digest::SHA256.hexdigest(body.sub(/\n+\z/, '')) == approval.fetch('sha256'), 'RPM scriptlet changed; review required')
-        MoonshineHost.ensure!(Array(tags[prog]) == approval.fetch('interpreter'), 'Unreviewed RPM scriptlet interpreter/arguments')
+        MoonshineHost.ensure!(tags.fetch(tag,'').sub(/\n+\z/,'') == REVIEWED_SCRIPTS[name], 'RPM scriptlet changed; review required')
+        MoonshineHost.ensure!(['/bin/sh',['/bin/sh']].include?(tags[prog]), 'Unreviewed RPM scriptlet interpreter/arguments')
       end
       MoonshineHost.ensure!(!tags[1023] || tags[1023].empty?, 'Unexpected RPM pre-install scriptlet')
       MoonshineHost.ensure!(!tags[1025] || tags[1025].empty?, 'Unexpected RPM pre-remove scriptlet')

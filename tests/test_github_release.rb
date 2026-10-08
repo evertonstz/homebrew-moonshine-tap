@@ -34,7 +34,8 @@ class GitHubReleaseTest < Minitest::Test
       @jobs = {'total_count' => 3, 'jobs' => MoonshineGitHub::JOB_NAMES.map do |name|
         steps = name == MoonshineCI::REQUIRED_CHECK ? ['Require all prerequisite jobs to succeed'] :
           ['Check source and all generated casks', 'Load every offered token with Homebrew',
-           'Inspect and extract every retained official RPM', 'Run all regressions with mandatory official RPM extraction']
+           'Inspect and extract every retained official RPM', 'Run all regressions with mandatory official RPM extraction',
+           'Validate an isolated untested recipe with Homebrew']
         {'name' => name, 'status' => 'completed', 'conclusion' => 'success',
          'steps' => steps.map { |step| {'name' => step, 'status' => 'completed', 'conclusion' => 'success'} }}
       end}
@@ -99,15 +100,40 @@ class GitHubReleaseTest < Minitest::Test
     end
   end
 
+  def teardown
+    @legacy_fixtures&.each { |directory| FileUtils.remove_entry_secure(directory) }
+    super
+  end
+
   def fixture
-    before = MoonshineCandidate.tree(ROOT).transform_values { |bytes| {'sha' => MoonshineGitHub.blob(bytes), 'mode' => '100644'} }
+    # These tests exercise the retained legacy protocol, not candidate-first publication.
+    directory = Dir.mktmpdir('moonshine-legacy-controller-test-')
+    (@legacy_fixtures ||= []) << directory
+    root = Pathname(directory)
+    files = MoonshineCandidate.tree(ROOT).reject do |name, _|
+      name == 'releases/catalog.json' || name == 'releases/previous/cask.rb' || name == 'Casks/moonshine@untested.rb' ||
+        name.start_with?('releases/stable/', 'releases/candidates/')
+    end
+    accepted = MoonshineReleases.current(ROOT)
+    files['lib/moonshine_host.rb'] = accepted.source
+    accepted.scripts.each { |name, body| files["reference/#{name}.sh"] = body + "\n" }
+    previous = MoonshineReleases.previous(ROOT)
+    files['releases/previous/release.json'] = JSON.generate('schema' => 1, 'release' => previous.release,
+                                                          'helper_sha256' => Digest::SHA256.hexdigest(previous.source))
+    files.each do |name, bytes|
+      path = root/name
+      path.dirname.mkpath
+      path.binwrite(bytes)
+    end
+    MoonshineCask.generate(root: root)
+    before = MoonshineCandidate.tree(root).transform_values { |bytes| {'sha' => MoonshineGitHub.blob(bytes), 'mode' => '100644'} }
     after = before.transform_values(&:dup)
-    MoonshineCandidate.patch(ROOT, RELEASE).each do |name, bytes|
+    MoonshineCandidate.patch(root, RELEASE).each do |name, bytes|
       bytes ? after[name] = {'sha' => MoonshineGitHub.blob(bytes), 'mode' => '100644'} : after.delete(name)
     end
     data = MoonshineGitHub.manifest(BASE, RELEASE, 123)
     api = FakeAPI.new(before, after, data)
-    [api, MoonshineGitHub::Controller.new(api: api, root: ROOT, bot_slug: 'moonshine-updates', bot_id: 12, check_app_id: 15368)]
+    [api, MoonshineGitHub::Controller.new(api: api, root: root, bot_slug: 'moonshine-updates', bot_id: 12, check_app_id: 15368)]
   end
 
   def publish(controller)
@@ -320,7 +346,7 @@ class GitHubReleaseTest < Minitest::Test
       assert_equal 'evertonstz', mint.dig('with', 'owner')
       assert_equal 'homebrew-moonshine-tap', mint.dig('with', 'repositories')
       permissions = mint['with'].select { |key, _| key.start_with?('permission-') }
-      expected = {'permission-contents' => 'write', 'permission-pull-requests' => 'write'}
+      expected = {'permission-contents' => 'write', 'permission-pull-requests' => 'write', 'permission-actions' => 'read'}
       expected.merge!('permission-actions' => 'read', 'permission-administration' => 'read') unless index.zero?
       assert_equal expected, permissions
       refute_equal true, mint.dig('with', 'skip-token-revoke')

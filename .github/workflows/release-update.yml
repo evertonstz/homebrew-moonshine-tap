@@ -4,6 +4,21 @@ name: Moonshine release updates
   schedule:
     - cron: '23 4 * * *'
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Forward discovery or owner-approved retained rollback
+        type: choice
+        options: [forward, rollback]
+        default: forward
+      target:
+        description: Exact retained rollback recipe SHA-256
+        type: string
+      reason:
+        description: Owner rollback reason
+        type: string
+  workflow_run:
+    workflows: [Moonshine CI]
+    types: [completed]
 
 permissions:
   contents: read
@@ -19,7 +34,11 @@ jobs:
       github.repository == 'evertonstz/homebrew-moonshine-tap' &&
       github.ref == 'refs/heads/main' &&
       vars.MOONSHINE_RELEASE_UPDATES_ENABLED == 'true' &&
-      (github.event_name == 'workflow_dispatch' || vars.MOONSHINE_RELEASE_SCHEDULE_ENABLED == 'true')
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'schedule' && vars.MOONSHINE_RELEASE_SCHEDULE_ENABLED == 'true') ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -27,11 +46,15 @@ jobs:
       base_sha: ${{ steps.result.outputs.base_sha }}
       release: ${{ steps.result.outputs.release }}
       asset_id: ${{ steps.result.outputs.asset_id }}
+      recipe_sha256: ${{ steps.result.outputs.recipe_sha256 }}
+      expected_current: ${{ steps.result.outputs.expected_current }}
+      operation: ${{ steps.result.outputs.operation }}
+      reason: ${{ steps.result.outputs.reason }}
     steps:
       - name: Check out the trusted scheduled or manual base
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
       - name: Set up Ruby
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
@@ -45,10 +68,17 @@ jobs:
       - name: Validate official packages and prepare only a disposable candidate
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          MOONSHINE_SELECTION_OPERATION: ${{ inputs.operation }}
+          MOONSHINE_SELECTION_TARGET: ${{ inputs.target }}
+          MOONSHINE_SELECTION_REASON: ${{ inputs.reason }}
           MOONSHINE_RELEASE_REPORT: ${{ runner.temp }}/moonshine-release-report.json
         run: |
           umask 077
-          ruby tools/update_release.rb --bsdtar /usr/bin/bsdtar --prepare > "$MOONSHINE_RELEASE_REPORT"
+          if test "$MOONSHINE_SELECTION_OPERATION" = rollback; then
+            ruby tools/select_candidate.rb /usr/bin/bsdtar > "$MOONSHINE_RELEASE_REPORT"
+          else
+            ruby tools/update_release.rb --bsdtar /usr/bin/bsdtar --prepare > "$MOONSHINE_RELEASE_REPORT"
+          fi
       - name: Publish checked data outputs, not executable candidate artifacts
         id: result
         env:
@@ -86,6 +116,7 @@ jobs:
           repositories: homebrew-moonshine-tap
           permission-contents: write
           permission-pull-requests: write
+          permission-actions: read
       - name: Reconstruct the permitted patch and publish one bot PR
         env:
           MOONSHINE_APP_TOKEN: ${{ steps.app.outputs.token }}
@@ -97,4 +128,9 @@ jobs:
           MOONSHINE_BASE_SHA: ${{ needs.detect.outputs.base_sha }}
           MOONSHINE_RELEASE: ${{ needs.detect.outputs.release }}
           MOONSHINE_ASSET_ID: ${{ needs.detect.outputs.asset_id }}
+          MOONSHINE_RECIPE_SHA256: ${{ needs.detect.outputs.recipe_sha256 }}
+          MOONSHINE_EXPECTED_CURRENT: ${{ needs.detect.outputs.expected_current }}
+          MOONSHINE_OPERATION: ${{ needs.detect.outputs.operation }}
+          MOONSHINE_ROLLBACK_REASON: ${{ needs.detect.outputs.reason }}
+          MOONSHINE_SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id }}
         run: ruby --disable=rubyopt tools/github_release.rb publish

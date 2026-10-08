@@ -46,7 +46,7 @@ class HostTest < Minitest::Test
     rpm.instance_variable_set(:@path,Pathname('unused.rpm'))
     rpm.instance_variable_set(:@tags,{1000=>'moonshine',1001=>'0.16.1',1002=>'1',1022=>'x86_64',1027=>names,
       1030=>[0100644]*names.length,1036=>['']*names.length,
-      1024=>H::REVIEWED_SCRIPTS['postinstall']+"\n",1086=>'/bin/sh',1026=>H::REVIEWED_SCRIPTS['postremove']+"\n",1088=>'/bin/sh',
+      1024=>File.read(File.join(__dir__, 'fixtures/postinstall.sh')).sub(/\n+\z/, '')+"\n",1086=>'/bin/sh',1026=>File.read(File.join(__dir__, 'fixtures/postremove.sh')).sub(/\n+\z/, '')+"\n",1088=>'/bin/sh',
       1049=>['glibc','rpmlib(PayloadIsZstd)'],1048=>[12,0],1050=>['2.38','']})
     rpm
   end

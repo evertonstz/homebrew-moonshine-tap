@@ -12,12 +12,25 @@ module MoonshineReleaseReport
     result = {'status' => report['status'], 'base_sha' => base_sha}
     if report['status'] == 'eligible'
       release = MoonshineReleases.metadata(report.fetch('release'))
-      MoonshineReleases.check((MoonshineReleases.version(release['version']) <=> MoonshineReleases.version(current['version'])) == 1,
+      MoonshineReleases.check((MoonshineReleases.version(release['version']) <=> MoonshineReleases.version(current['version'])) == 1 || (report['recipe_sha256'] && (release['version'] == current['version'] || report['operation'] == 'rollback')),
                               'Eligible release must be newer than the trusted baseline')
       asset = report['asset_id']
       MoonshineReleases.check(asset.is_a?(Integer) && asset.positive? && asset <= 0x7fff_ffff_ffff_ffff, 'Invalid checked asset ID')
       result['release'] = JSON.generate(release)
       result['asset_id'] = asset.to_s
+      if report['recipe_sha256']
+        MoonshineCandidates.identity(report['recipe_sha256'])
+        MoonshineCandidates.source_sha(report['source_sha'])
+        MoonshineReleases.check(report['source_sha'] == base_sha && %w[forward rollback].include?(report['operation']), 'Candidate source and operation differ')
+        MoonshineCandidates.identity(report['expected_current']) if report['expected_current']
+        result['recipe_sha256'] = report['recipe_sha256']
+        result['expected_current'] = report['expected_current'] || ''
+        result['operation'] = report['operation']
+        if report['operation'] == 'rollback'
+          MoonshineCandidates.reason!(report['reason'])
+          result['reason'] = report['reason']
+        end
+      end
     end
     result
   end
@@ -27,7 +40,7 @@ module MoonshineReleaseReport
     report = JSON.parse(MoonshineReleases.read_file(argv.first, 32 * 1024), max_nesting: 10)
     sha, error, status = Open3.capture3('git', 'rev-parse', 'HEAD')
     MoonshineReleases.check(status.success?, 'Cannot bind trusted base')
-    output = fields(report, sha.strip, MoonshineReleases.current(Pathname(__dir__).parent).release)
+    output = fields(report, sha.strip, MoonshineReleases.snapshot_directories(Pathname(__dir__).parent)[:stable] ? MoonshineReleases.development(Pathname(__dir__).parent).release : MoonshineReleases.current(Pathname(__dir__).parent).release)
     File.open(ENV.fetch('GITHUB_OUTPUT'), 'a') { |file| output.each { |key, value| file.puts "#{key}=#{value}" } }
     File.open(ENV.fetch('GITHUB_STEP_SUMMARY'), 'a') do |file|
       file.puts "Release outcome: #{output.fetch('status')}. Package-only validation; no installation, downgrade or streaming proof."
