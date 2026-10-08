@@ -9,7 +9,7 @@ class CandidateControllerTest < Minitest::Test
   BASE = GitHubReleaseTest::BASE
   HEAD = GitHubReleaseTest::HEAD
 
-  def fixture(current: false, operation: 'forward', target: nil, reason: nil)
+  def fixture(current: false)
     Dir.mktmpdir('moonshine-candidate-controller-') do |directory|
       root = Pathname(directory)
       files = MoonshineCandidate.tree(ROOT).reject { |name, _| name.start_with?('releases/candidates/') || name == 'Casks/moonshine@untested.rb' }
@@ -69,6 +69,20 @@ class CandidateControllerTest < Minitest::Test
       assert_equal 'merged', controller.merge(base: BASE, run_id: 101)['status']
       assert_equal({'sha' => HEAD, 'merge_method' => 'squash'}, api.writes.last.last)
       assert_equal before, MoonshineCandidate.tree(root)
+    end
+  end
+
+  def test_checked_main_trigger_requires_actual_successful_exact_head_jobs
+    fixture do |root, api, controller, data|
+      api.run.merge!('event' => 'push', 'head_branch' => 'main', 'head_sha' => BASE, 'pull_requests' => [])
+      api.latest['workflow_runs'] = [api.run.dup]
+      assert controller.checked_main!(BASE, 101)
+      steps = api.jobs['jobs'].first['steps']
+      check = steps.find { |step| step['name'] == 'Validate an isolated untested recipe with Homebrew' }
+      assert check, 'The private candidate integration step must be mandatory'
+      check['conclusion'] = 'skipped'
+      assert_raises(G::Failure) { controller.checked_main!(BASE, 101) }
+      assert_empty api.writes
     end
   end
 
