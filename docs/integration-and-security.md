@@ -36,6 +36,12 @@ Ordinary uninstall preserves pairing, personal configuration, account groups, li
 
 A sysext refresh briefly unmerges and remerges shared hierarchies. Other extensions' resources can disappear during that interval. The helper checks that unrelated extensions remain merged afterward. It cannot guarantee that unrelated processes remain unaffected.
 
+## Scriptlet review
+
+The development helper binds each approved scriptlet to its role, SHA-256 and exact `/bin/sh` interpreter arguments. Review removes trailing newline bytes before hashing. It does not automatically approve a changed digest or authenticate the publisher.
+
+Installation executes only the checked package-extracted script. Cached extracted scripts remain necessary for uninstall and recovery. Frozen legacy recipes retain their original reviewed inputs. New candidate snapshots store approval data instead of maintained upstream script copies. See [candidate identity](candidate-channel.md#candidate-identity).
+
 ## References
 
 - [Homebrew tap maintenance](https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap)
