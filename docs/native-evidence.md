@@ -4,7 +4,7 @@ The initial policy requires fresh owner-run checks on real Bazzite x86_64 with e
 
 Offline validation checks report claims as data and reports `owner_report_authenticated:false`. The source-checking mode reads an explicit owner-authored PR comment through GitHub's API. It checks the owner's numeric account identity and exact report record, then reports `owner_report_authenticated:true`. This authenticates an owner attestation without collecting observations, contacting a host or reading private logs.
 
-Both modes report `publication_enabled:false`, `native_acceptance_verified:false` and `host_installation:false`. The promotion gate still exits unsuccessfully because the protected publisher is not implemented. No report creates a patch or rotates either channel.
+Both modes report `publication_enabled:false`, `native_acceptance_verified:false` and `host_installation:false`. The read-only promotion gate still exits unsuccessfully. The default controller refuses stable promotion. Protected workflow wiring and activation remain unfinished. Report assessment does not rotate either channel.
 
 ## Identity and provenance
 
@@ -18,7 +18,7 @@ The policy is `reference/native-policy.json`, schema 2, profile `bazzite-owner-v
 | `baseline_recipe_sha256` | Current accepted stable recipe used for native upgrade/recovery testing. A changed baseline invalidates the report's upgrade-path claims. |
 | `provenance` | Exactly `kind:owner-run-native` and `owner:evertonstz`. These are claims, not proof of authentication. |
 
-The read-only promotion entrypoint requires an owner workflow dispatch on trusted main and an owner rerun actor. Source-checking mode requires a GitHub-authenticated owner comment independently of those environment values. A locally fabricated GitHub environment or owner name cannot authorize publication. Protected positive publication and owner approval of the exact final promotion head remain unfinished.
+The read-only promotion entrypoint requires an owner workflow dispatch on trusted main and an owner rerun actor. Source-checking mode requires a GitHub-authenticated owner comment independently of those environment values. A locally fabricated GitHub environment or owner name cannot authorize publication. The controller checks owner approval of the exact final promotion head. The workflow still has no publisher job.
 
 ## Authenticated owner record
 
@@ -40,7 +40,19 @@ GitHub's repository owner and comment author must both be the selected `evertons
 
 After local report validation, the reader checks the source again. The receipt records the repository ID, owner ID, comment/PR IDs, body digest and creation/update timestamps. Future publication and merge must recheck that bound source with the trusted live API client. A previously printed receipt or `owner_report_authenticated:true` value is not authorization by itself.
 
-This receipt is a snapshot of the current record, not an immutable history of every edit. It cannot prove that the owner executed the reported observations or that a private log matches its digest. Exact-head approval, current-base/protection checks and the positive publisher remain separate requirements.
+This receipt is a snapshot of the current record, not an immutable history of every edit. It cannot prove that the owner executed the reported observations or that a private log matches its digest. The controller checks exact-head approval, current base and repository protection before merge. These checks do not prove the reported host observations.
+
+## Protected controller contract
+
+The controller supports an explicit `promote` manifest with trusted base SHA, exact retained target, expected stable identity, raw comment origin and canonical report digest. It authenticates the source again and reconstructs the permitted patch from frozen inputs. It never executes PR code, a generated cask or a package with write credentials.
+
+The patch preserves candidate selection/history, development inputs and unrelated files. Stable receives the exact candidate snapshot. The former stable becomes the accepted predecessor, and generated stable casks retain numeric upstream versions. Same-version or backwards replacement still requires a separate delivery policy and refuses.
+
+The publisher requires scoped App credentials and strict current-base protection. It creates one bot commit, branch and PR without replacing a ref. It rechecks the source before branch and PR creation. Repeated requests reuse the same checked PR. A changed source or baseline refuses. Failed writes do not change local recipes.
+
+Merge requires the exact reconstructed tree, base/head, bot identity, latest actual mandatory CI work and the owner's latest approval of that head. It rechecks approval and live report source before requesting a head-bound protected squash. GitHub enforces head and strict-base checks at merge. Source and review reads are current snapshots, not an atomic transaction across all mutable GitHub records.
+
+The controller defaults to `promotions_enabled:false`. The shipping CLI does not enable it, and the read-only workflow cannot mint write credentials. This contract has synthetic API tests only. Package prerequisites, scalar publisher wiring and separately authorized operational activation remain unfinished. No production candidate or genuine native acceptance report is selected.
 
 ## Recorded host
 
@@ -78,6 +90,6 @@ The `os_policy_updates` value remains `ongoing`. Record outcomes of normal real 
 
 Input is at most 32 KiB with nesting limited to ten levels. The validator rejects duplicate or unknown fields, invalid identities, unsafe policy paths and mismatched observations. JSON parser errors use static categories instead of printing raw report snippets.
 
-The output's `report_sha256` binds the canonical parsed report, including host, log and baseline claims. Object-key order and whitespace do not change it. It is distinct from a raw-file or artifact SHA-256. A future authenticated publisher must check the recorded report rather than trust an arbitrary matching summary.
+The output's `report_sha256` binds the canonical parsed report, including host, log and baseline claims. Object-key order and whitespace do not change it. It is distinct from a raw-file or artifact SHA-256. The controller checks the recorded report through the live API. An arbitrary matching summary cannot approve a patch.
 
 Repository tests contain synthetic reports to exercise these rules. They are not native acceptance records. Existing historical Bazzite results do not approve a different recipe hash. Stable promotion and same-upstream-version replacement remain disabled pending their separate protected-publication and delivery contracts.

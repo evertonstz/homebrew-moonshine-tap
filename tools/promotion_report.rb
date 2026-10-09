@@ -28,7 +28,7 @@ module MoonshinePromotionReport
                                         evidence: ENV.fetch('MOONSHINE_NATIVE_EVIDENCE'))
     end
     puts JSON.pretty_generate(result)
-    raise MoonshineReleases::Failure, 'Protected promotion publisher is not implemented; report matching cannot authorize publication'
+    raise MoonshineReleases::Failure, 'Read-only report matching cannot authorize publication; protected workflow wiring is not enabled'
   rescue StandardError => e
     warn "Promotion refused before write credentials: #{e.class}: #{e.message}"
     1

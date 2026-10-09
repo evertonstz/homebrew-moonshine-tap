@@ -6,7 +6,7 @@
 
 Release automation remains disabled until the owner configures its App and protection settings and completes controlled remote checks. Read-only CI runs independently. See [CI runs](https://github.com/evertonstz/homebrew-moonshine-tap/actions/workflows/ci.yml) for current results.
 
-When enabled, the detector checks daily, on manual request, or after successful checked-main CI. Eligible recipes update only the untested channel. Stable promotion remains disabled until the native evidence policy and positive publisher are complete. It downloads official stable RPMs, calculates SHA-256 and checks the current pin. SHA-256 binds the downloaded bytes to a digest. It is not an independent publisher signature. The detector inspects headers, scriptlets, triggers, dependencies, inventory and protected integration content without executing package code.
+When enabled, the detector checks daily, on manual request, or after successful checked-main CI. Eligible recipes update only the untested channel. Stable promotion remains disabled pending protected workflow wiring and separate activation. It downloads official stable RPMs, calculates SHA-256 and checks the current pin. SHA-256 binds the downloaded bytes to a digest. It is not an independent publisher signature. The detector inspects headers, scriptlets, triggers, dependencies, inventory and protected integration content without executing package code.
 
 Only the server and WSI binary contents can differ automatically. Packaging changes require review.
 

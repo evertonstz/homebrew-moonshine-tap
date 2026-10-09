@@ -47,9 +47,13 @@ module MoonshinePromotion
     end
   end
 
-  def patch(root:, target:, expected_stable:, evidence: nil, origin: nil, api: nil)
-    assess(root: root, target: target, expected_stable: expected_stable, evidence: evidence, origin: origin, api: api)
-    # A matching report cannot authenticate its own origin or approve a protected promotion head.
-    raise MoonshineReleases::Failure, 'Protected promotion publisher is not implemented; report matching cannot authorize publication'
+  def patch(root:, target:, expected_stable:, evidence: nil, origin: nil, api: nil, report_sha256: nil)
+    result = assess(root: root, target: target, expected_stable: expected_stable, evidence: evidence, origin: origin, api: api)
+    MoonshineReleases.check(result['owner_report_authenticated'] == true && report_sha256,
+                            'Protected promotion requires authenticated source and report digest; report matching cannot authorize publication')
+    MoonshineNativeEvidence.digest(report_sha256, 'Invalid bound native report digest')
+    MoonshineReleases.check(result['report_sha256'] == report_sha256, 'Native report digest changed; fresh promotion review required')
+    # Reconstruct data only. The controller still requires protection, CI and exact-head owner approval.
+    projection(root: root, target: target, expected_stable: expected_stable)
   end
 end
