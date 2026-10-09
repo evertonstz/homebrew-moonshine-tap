@@ -1,5 +1,5 @@
-# Exact retained-candidate projection. Positive publication stays disabled until native policy exists.
-require_relative 'release_candidate'
+# Exact retained-candidate projection. Positive publication requires a protected publisher.
+require_relative 'native_evidence'
 
 module MoonshinePromotion
   extend self
@@ -37,12 +37,13 @@ module MoonshinePromotion
     (before.keys | after.keys).sort.filter_map { |name| [name, after[name]] unless before[name] == after[name] }.to_h
   end
 
+  def assess(root:, target:, expected_stable:, evidence:)
+    MoonshineNativeEvidence.assess(root: root, target: target, expected_stable: expected_stable, evidence: evidence)
+  end
+
   def patch(root:, target:, expected_stable:, evidence:)
-    # Fail before any projection/publication. Approval never manufactures native acceptance.
-    policy = JSON.parse(MoonshineReleases.read_file(Pathname(root)/'reference/native-policy.json', 8192), max_nesting: 10)
-    MoonshineReleases.check(policy.is_a?(Hash) && policy.keys.sort == %w[reason schema state] &&
-                            policy['schema'].is_a?(Integer) && policy['schema'] == 1 && policy['state'] == 'unconfigured',
-                            'Unsupported native evidence policy; owner policy review required')
-    raise MoonshineReleases::Failure, 'Native evidence policy is not configured; stable promotion is disabled'
+    assess(root: root, target: target, expected_stable: expected_stable, evidence: evidence)
+    # A matching report cannot authenticate its own origin or approve a protected promotion head.
+    raise MoonshineReleases::Failure, 'Protected promotion publisher is not implemented; report matching cannot authorize publication'
   end
 end

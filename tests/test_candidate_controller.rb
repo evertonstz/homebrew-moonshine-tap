@@ -295,6 +295,7 @@ class CandidateControllerTest < Minitest::Test
 
   def test_unconfigured_native_policy_cannot_be_bypassed_with_claimed_successful_evidence
     fixture do |root, api, controller, data|
+      (root/'reference/native-policy.json').write(JSON.generate('schema' => 1, 'state' => 'unconfigured', 'reason' => 'Policy not selected'))
       before = MoonshineCandidate.tree(root)
       error = assert_raises(R::Failure) do
         MoonshinePromotion.patch(root: root, target: data['recipe_sha256'], expected_stable: R.current(root).identity,

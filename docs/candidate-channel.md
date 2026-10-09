@@ -2,7 +2,7 @@
 
 This channel is opt-in. The official RPM can be a stable upstream release while its Homebrew integration recipe is untested.
 
-The implementation is under review. No untested cask is selected in the initial catalog. Automation remains disabled until the owner configures the App, required checks and protected merge behavior. Stable promotion is disabled because the native evidence policy is unconfigured.
+No untested cask is selected in the initial catalog. Automation remains disabled until the owner configures the App, required checks and protected merge behavior. The initial native-report policy is selected, but stable promotion remains disabled until authenticated report handling and the protected publisher are implemented.
 
 ## Candidate identity
 
@@ -41,7 +41,7 @@ Stable and accepted predecessor snapshots contain their complete installation te
 
 Promotion previews use the selected retained candidate's exact RPM, helper, scriptlet approvals and template. They rotate only the accepted predecessor. Candidate history and the untested selection remain independent.
 
-Positive promotion is disabled. The owner must select the required native host matrix and evidence provenance before the promotion publisher can be completed. Package extraction, hosted CI and PR approval do not establish native lifecycle or streaming acceptance. Existing Bazzite results do not transfer to a different recipe hash.
+Positive promotion is disabled. The selected initial policy requires fresh owner-run Bazzite observations for the exact candidate and tested accepted baseline. The [native report contract](native-evidence.md) checks identity, host and required observation claims without authenticating their origin or publishing a patch. Protected report handling and exact-head owner approval remain necessary. Package extraction, hosted CI and PR approval do not establish native lifecycle or streaming acceptance. Existing Bazzite results do not transfer to a different recipe hash.
 
 Replacing stable with a different recipe for the same upstream version also refuses. The numeric stable version would not signal an ordinary Homebrew upgrade. This requires a separate delivery policy before publication.
 
