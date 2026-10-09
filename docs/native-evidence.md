@@ -4,7 +4,7 @@ The initial policy requires fresh owner-run checks on real Bazzite x86_64 with e
 
 Offline validation checks report claims as data and reports `owner_report_authenticated:false`. The source-checking mode reads an explicit owner-authored PR comment through GitHub's API. It checks the owner's numeric account identity and exact report record, then reports `owner_report_authenticated:true`. This authenticates an owner attestation without collecting observations, contacting a host or reading private logs.
 
-Both modes report `publication_enabled:false`, `native_acceptance_verified:false` and `host_installation:false`. The read-only promotion gate still exits unsuccessfully. The default controller refuses stable promotion. Protected workflow wiring and activation remain unfinished. Report assessment does not rotate either channel.
+Both modes report `publication_enabled:false`, `native_acceptance_verified:false` and `host_installation:false`. Report-only requests exit unsuccessfully. Package-check mode can export checked scalar inputs. The default controller refuses stable promotion. Operational activation remains unfinished. Report assessment does not rotate either channel.
 
 ## Identity and provenance
 
@@ -18,7 +18,7 @@ The policy is `reference/native-policy.json`, schema 2, profile `bazzite-owner-v
 | `baseline_recipe_sha256` | Current accepted stable recipe used for native upgrade/recovery testing. A changed baseline invalidates the report's upgrade-path claims. |
 | `provenance` | Exactly `kind:owner-run-native` and `owner:evertonstz`. These are claims, not proof of authentication. |
 
-The read-only promotion entrypoint requires an owner workflow dispatch on trusted main and an owner rerun actor. Source-checking mode requires a GitHub-authenticated owner comment independently of those environment values. A locally fabricated GitHub environment or owner name cannot authorize publication. The controller checks owner approval of the exact final promotion head. The workflow still has no publisher job.
+The read-only promotion entrypoint requires an owner workflow dispatch on trusted main and an owner rerun actor. Source-checking mode requires a GitHub-authenticated owner comment independently of those environment values. A locally fabricated GitHub environment or owner name cannot authorize publication. The controller checks owner approval of the exact final promotion head. The publisher requires successful read-only prerequisites and separate stable-promotion activation.
 
 ## Authenticated owner record
 
@@ -52,7 +52,19 @@ The publisher requires scoped App credentials and strict current-base protection
 
 Merge requires the exact reconstructed tree, base/head, bot identity, latest actual mandatory CI work and the owner's latest approval of that head. It rechecks approval and live report source before requesting a head-bound protected squash. GitHub enforces head and strict-base checks at merge. Source and review reads are current snapshots, not an atomic transaction across all mutable GitHub records.
 
-The controller defaults to `promotions_enabled:false`. The shipping CLI does not enable it, and the read-only workflow cannot mint write credentials. This contract has synthetic API tests only. Package prerequisites, scalar publisher wiring and separately authorized operational activation remain unfinished. No production candidate or genuine native acceptance report is selected.
+The controller defaults to `promotions_enabled:false`. The CLI enables it only when `MOONSHINE_STABLE_PROMOTION_ENABLED` is exactly `true`. Candidate activation cannot enable it. The read-only prerequisite job cannot mint write credentials. The workflow and CLI contracts have synthetic boundary tests. Separately authorized App, protection and operational activation checks remain unfinished. No production candidate or genuine native acceptance report is selected.
+
+## Workflow data exchange
+
+The owner dispatch selects the target, expected stable hash and three comment-origin scalars. The prerequisite job uses trusted main with no retained checkout credentials. It loads every offered cask with Homebrew without installation. It inspects and extracts every retained official RPM through that recipe's helper and compares protected packaging contracts.
+
+After package checks, it rechecks the live source, unchanged checkout and current main. It exports only status, base SHA, target, expected stable, comment ID/digest/time and canonical report digest. It exports no package paths, report bodies or executable artifacts. Failed checks produce no positive outputs.
+
+The publisher checks out that bound trusted base. It requires `MOONSHINE_STABLE_PROMOTION_ENABLED=true` independently of candidate activation. Only then can it request a short-lived App token for this repository. That token grants Contents/PR write and Actions/Administration read. Administration read permits protection inspection, not settings changes. The publisher never loads a cask, extracts an RPM or executes a package helper with write credentials.
+
+The CLI reauthenticates the source and reconstructs the exact patch from trusted inputs. It cannot accept an offline receipt or foreign candidate-publication fields as promotion authority. The merge controller distinguishes candidate and promotion activation and requires current exact-head owner approval. If CI completes before approval, the owner must approve that head and rerun its CI to trigger another protected merge check. A rerun cannot reuse approval for a different head.
+
+Operational activation, authentic native observations and same-version delivery remain separate gates. No repository variable, App credential or setting is configured by this implementation.
 
 ## Recorded host
 
@@ -92,4 +104,4 @@ Input is at most 32 KiB with nesting limited to ten levels. The validator reject
 
 The output's `report_sha256` binds the canonical parsed report, including host, log and baseline claims. Object-key order and whitespace do not change it. It is distinct from a raw-file or artifact SHA-256. The controller checks the recorded report through the live API. An arbitrary matching summary cannot approve a patch.
 
-Repository tests contain synthetic reports to exercise these rules. They are not native acceptance records. Existing historical Bazzite results do not approve a different recipe hash. Stable promotion and same-upstream-version replacement remain disabled pending their separate protected-publication and delivery contracts.
+Repository tests contain synthetic reports to exercise these rules. They are not native acceptance records. Existing historical Bazzite results do not approve a different recipe hash. Stable promotion remains disabled pending separate operational activation. Same-upstream-version replacement refuses until the owner selects its delivery contract.

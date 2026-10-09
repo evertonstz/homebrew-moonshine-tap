@@ -13,7 +13,7 @@ module MoonshineReleaseCheck
     puts JSON.generate(contract)
   RUBY
 
-  def run(root:, bsdtar:, client:, packages: nil, compare: false, test_rpm_copy: nil)
+  def run(root:, bsdtar:, client:, packages: nil, compare: false, test_rpm_copy: nil, runner: Open3.method(:capture3))
     root = Pathname(root)
     accepted = MoonshineReleases.recipes(root)
     recipes = [*accepted, *MoonshineCandidates.retained(root)]
@@ -24,7 +24,7 @@ module MoonshineReleaseCheck
         client.download(MoonshineUpdate.download_url(release), path) unless packages || path.exist?
         MoonshineUpdate.check(path.file? && !path.symlink?, 'Missing real retained RPM')
         helper = recipe.helper_path
-        output, error, status = Open3.capture3({'RUBYOPT' => nil, 'RUBYLIB' => nil, 'GITHUB_TOKEN' => nil},
+        output, error, status = runner.call({'RUBYOPT' => nil, 'RUBYLIB' => nil, 'GITHUB_TOKEN' => nil, 'GH_TOKEN' => nil, 'MOONSHINE_APP_TOKEN' => nil},
                                                RbConfig.ruby, '--disable=rubyopt', '-r', helper.to_s,
                                                '-r', (Pathname(__dir__).parent/'lib/release_update.rb').to_s,
                                                '-e', INSPECT, path.to_s, bsdtar, JSON.generate(release))

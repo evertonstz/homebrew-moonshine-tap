@@ -2,7 +2,7 @@
 
 This channel is opt-in. The official RPM can be a stable upstream release while its Homebrew integration recipe is untested.
 
-No untested cask is selected in the initial catalog. Automation remains disabled until the owner configures the App, required checks and protected merge behavior. The initial native-report policy is selected, but stable promotion remains disabled pending protected workflow wiring and separate activation.
+No untested cask is selected in the initial catalog. Automation remains disabled until the owner configures the App, required checks and protected merge behavior. The initial native-report policy is selected, but stable promotion remains disabled pending separate operational activation.
 
 ## Candidate identity
 
@@ -41,7 +41,7 @@ Stable and accepted predecessor snapshots contain their complete installation te
 
 Promotion previews use the selected retained candidate's exact RPM, helper, scriptlet approvals and template. They rotate only the accepted predecessor. Candidate history and the untested selection remain independent.
 
-Positive promotion is disabled. The selected initial policy requires fresh owner-run Bazzite observations for the exact candidate and tested accepted baseline. The [native report contract](native-evidence.md) checks identity, host and required observation claims. Its live source mode authenticates the owner attestation. The protected controller reconstructs a bound patch and requires exact-head owner approval, but defaults to disabled. The read-only workflow still has no publisher job. Package extraction, hosted CI and PR approval do not establish native lifecycle or streaming acceptance. Existing Bazzite results do not transfer to a different recipe hash.
+Positive promotion is disabled. The selected initial policy requires fresh owner-run Bazzite observations for the exact candidate and tested accepted baseline. The [native report contract](native-evidence.md) checks identity, host and required observation claims. Its live source mode authenticates the owner attestation. The protected controller reconstructs a bound patch and requires exact-head owner approval, but defaults to disabled. The workflow separates read-only package prerequisites from its scoped publisher. Both the CLI and publisher require independent stable-promotion activation. Package extraction, hosted CI and PR approval do not establish native lifecycle or streaming acceptance. Existing Bazzite results do not transfer to a different recipe hash.
 
 Replacing stable with a different recipe for the same upstream version also refuses. The numeric stable version would not signal an ordinary Homebrew upgrade. This requires a separate delivery policy before publication.
 

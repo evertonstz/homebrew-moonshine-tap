@@ -17,7 +17,7 @@ jobs:
   merge:
     if: >-
       github.repository == 'evertonstz/homebrew-moonshine-tap' &&
-      vars.MOONSHINE_RELEASE_UPDATES_ENABLED == 'true' &&
+      (vars.MOONSHINE_RELEASE_UPDATES_ENABLED == 'true' || vars.MOONSHINE_STABLE_PROMOTION_ENABLED == 'true') &&
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'automation/moonshine-release' &&
@@ -54,5 +54,6 @@ jobs:
           MOONSHINE_BOT_ID: ${{ vars.MOONSHINE_BOT_ID }}
           MOONSHINE_CHECK_APP_ID: ${{ vars.MOONSHINE_CHECK_APP_ID }}
           MOONSHINE_RELEASE_UPDATES_ENABLED: ${{ vars.MOONSHINE_RELEASE_UPDATES_ENABLED }}
+          MOONSHINE_STABLE_PROMOTION_ENABLED: ${{ vars.MOONSHINE_STABLE_PROMOTION_ENABLED }}
           MOONSHINE_CI_RUN_ID: ${{ github.event.workflow_run.id }}
         run: ruby --disable=rubyopt tools/github_release.rb merge

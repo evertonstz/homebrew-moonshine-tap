@@ -150,7 +150,7 @@ module MoonshineGitHub
   end
 
   class Controller
-    def initialize(api:, root:, bot_slug:, bot_id:, check_app_id:, promotions_enabled: false)
+    def initialize(api:, root:, bot_slug:, bot_id:, check_app_id:, promotions_enabled: false, candidates_enabled: true)
       MoonshineGitHub.check(bot_slug.is_a?(String) && bot_slug.match?(/\A[a-z0-9][a-z0-9-]{0,62}\z/), 'Missing expected App slug')
       @api, @root = api, Pathname(root)
       @bot = "#{bot_slug}[bot]"
@@ -158,6 +158,7 @@ module MoonshineGitHub
       @check_app_id = MoonshineGitHub.integer(check_app_id)
       @prefix = "/repos/#{REPOSITORY}"
       @promotions_enabled = promotions_enabled == true
+      @candidates_enabled = candidates_enabled == true
     end
 
     def get(suffix, missing: false)
@@ -214,6 +215,7 @@ module MoonshineGitHub
     end
 
     def expected(data)
+      MoonshineGitHub.check(@candidates_enabled || data['operation'] == 'promote', 'Candidate automation is not activated')
       base!(data.fetch('base_sha'))
       object, files = tree(data['base_sha'])
       local = MoonshineCandidate.tree(@root)
