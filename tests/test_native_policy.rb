@@ -100,7 +100,7 @@ class NativePolicyTest < Minitest::Test
         MoonshinePromotion.patch(root: root, target: item.identity, expected_stable: R.current(root).identity,
                                 origin: origin, api: api)
       end
-      assert_includes error.message, 'Protected promotion publisher is not implemented'
+      assert_includes error.message, 'report matching cannot authorize publication'
       assert_equal before, MoonshineCandidate.tree(root)
     end
   end
@@ -265,7 +265,7 @@ class NativePolicyTest < Minitest::Test
       before = MoonshineCandidate.tree(root)
       output, error, status = authenticated_cli(root, item, origin, replies)
       assert_equal 1, status.exitstatus
-      assert_includes error, 'Protected promotion publisher is not implemented'
+      assert_includes error, 'report matching cannot authorize publication'
       result = JSON.parse(output)
       assert_equal true, result['owner_report_authenticated']
       assert_equal origin['body_sha256'], result.dig('origin', 'body_sha256')
@@ -524,7 +524,7 @@ class NativePolicyTest < Minitest::Test
           before = MoonshineCandidate.tree(root)
           output, error, status = report(root, item, evidence)
           assert_equal 1, status.exitstatus
-          assert_includes error, 'Protected promotion publisher is not implemented'
+          assert_includes error, 'report matching cannot authorize publication'
           assert_equal item.identity, JSON.parse(output)['recipe_sha256']
           refute_equal C.catalog(root)['current'], item.identity
           assert_equal before, MoonshineCandidate.tree(root)
@@ -576,7 +576,7 @@ class NativePolicyTest < Minitest::Test
       error = assert_raises(R::Failure) do
         MoonshinePromotion.patch(root: root, target: item.identity, expected_stable: R.current(root).identity, evidence: evidence)
       end
-      assert_includes error.message, 'Protected promotion publisher is not implemented'
+      assert_includes error.message, 'report matching cannot authorize publication'
       assert_equal before, MoonshineCandidate.tree(root)
     end
   end
@@ -586,7 +586,7 @@ class NativePolicyTest < Minitest::Test
       before = MoonshineCandidate.tree(root)
       output, error, status = report(root, item, evidence)
       assert_equal 1, status.exitstatus
-      assert_includes error, 'Protected promotion publisher is not implemented'
+      assert_includes error, 'report matching cannot authorize publication'
       data = JSON.parse(output)
       assert_equal 'matching_owner_report', data['status']
       assert_equal item.identity, data['recipe_sha256']

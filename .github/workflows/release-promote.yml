@@ -60,4 +60,4 @@ jobs:
           MOONSHINE_NATIVE_COMMENT_UPDATED_AT: ${{ inputs.comment_updated_at }}
           GH_TOKEN: ${{ github.token }}
         run: ruby --disable=rubyopt tools/promotion_report.rb
-# No write-token or publication job exists until authenticated report handling and protected publication are implemented.
+# No write-token or publication job: package prerequisites and protected publisher wiring remain unfinished.
