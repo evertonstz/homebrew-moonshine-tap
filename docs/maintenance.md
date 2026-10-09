@@ -6,7 +6,7 @@
 
 Release automation remains disabled until the owner configures its App and protection settings and completes controlled remote checks. Read-only CI runs independently. See [CI runs](https://github.com/evertonstz/homebrew-moonshine-tap/actions/workflows/ci.yml) for current results.
 
-When enabled, the detector checks daily, on manual request, or after successful checked-main CI. Eligible recipes update only the untested channel. Stable promotion remains disabled pending protected workflow wiring and separate activation. It downloads official stable RPMs, calculates SHA-256 and checks the current pin. SHA-256 binds the downloaded bytes to a digest. It is not an independent publisher signature. The detector inspects headers, scriptlets, triggers, dependencies, inventory and protected integration content without executing package code.
+When enabled, the detector checks daily, on manual request, or after successful checked-main CI. Eligible recipes update only the untested channel. Stable promotion remains disabled pending separate operational activation. It downloads official stable RPMs, calculates SHA-256 and checks the current pin. SHA-256 binds the downloaded bytes to a digest. It is not an independent publisher signature. The detector inspects headers, scriptlets, triggers, dependencies, inventory and protected integration content without executing package code.
 
 Only the server and WSI binary contents can differ automatically. Packaging changes require review.
 
@@ -30,11 +30,11 @@ App setup, protection changes and activation require separate owner approval.
 
    Grant Contents write, Pull requests write, Actions read, Administration read and mandatory Metadata read. Administration read permits protection inspection only. Do not grant settings-write permission, workflow-write permission or bypass allowances.
 
-   The publisher token requests Contents and Pull requests write plus Actions read to check main-triggered CI. The merge token also requests Administration read. Tokens expire, and the pinned action revokes them after each job.
+   The publisher token requests Contents and Pull requests write plus Actions read to check main-triggered CI. The promotion publisher and merge tokens also request Administration read. Tokens expire, and the pinned action revokes them after each job.
 
 2. Add `MOONSHINE_APP_PRIVATE_KEY` as a repository secret.
 
-   Set repository variables `MOONSHINE_APP_ID`, `MOONSHINE_APP_SLUG`, `MOONSHINE_BOT_ID` and `MOONSHINE_CHECK_APP_ID`. Check the numeric bot identity and GitHub Actions check-provider identity from GitHub. Keep `MOONSHINE_RELEASE_UPDATES_ENABLED` and `MOONSHINE_RELEASE_SCHEDULE_ENABLED` absent or `false` initially.
+   Set repository variables `MOONSHINE_APP_ID`, `MOONSHINE_APP_SLUG`, `MOONSHINE_BOT_ID` and `MOONSHINE_CHECK_APP_ID`. Check the numeric bot identity and GitHub Actions check-provider identity from GitHub. Keep `MOONSHINE_RELEASE_UPDATES_ENABLED`, `MOONSHINE_RELEASE_SCHEDULE_ENABLED` and `MOONSHINE_STABLE_PROMOTION_ENABLED` absent or `false` initially.
 
 3. Configure merging and protection.
 
@@ -52,7 +52,9 @@ App setup, protection changes and activation require separate owner approval.
 
    Scheduled detection runs at 04:23 UTC. GitHub can delay runs or disable schedules after public-repository inactivity. Use the default-branch manual trigger for operator recovery.
 
-   Disable `MOONSHINE_RELEASE_UPDATES_ENABLED` to stop new automated writes and merges. Review any existing PR separately.
+   Disable `MOONSHINE_RELEASE_UPDATES_ENABLED` to stop candidate writes and merges. Disable `MOONSHINE_STABLE_PROMOTION_ENABLED` to stop promotion writes and merges. Review any existing PR separately.
+
+Stable promotion uses the separate owner-dispatched workflow and [native report contract](native-evidence.md). Its read-only job checks offered casks, retained packages and the bound source before any publisher token. Keep `MOONSHINE_STABLE_PROMOTION_ENABLED` absent or `false` until separately authorized operational checks complete. Candidate activation does not authorize stable publication. Stable-promotion activation does not authorize candidate publication.
 
 A changed base, changed branch or closed update PR requires owner review, fresh detection and validation. The bot never automatically deletes or force-rewrites the branch or PR. Cached recovery is a host operation. It never runs in response to a tap release PR.
 

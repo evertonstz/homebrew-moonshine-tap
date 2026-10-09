@@ -41,17 +41,40 @@ jobs:
       github.triggering_actor == 'evertonstz'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      status: ${{ steps.result.outputs.status }}
+      base_sha: ${{ steps.result.outputs.base_sha }}
+      target: ${{ steps.result.outputs.target }}
+      expected_stable: ${{ steps.result.outputs.expected_stable }}
+      comment_id: ${{ steps.result.outputs.comment_id }}
+      comment_sha256: ${{ steps.result.outputs.comment_sha256 }}
+      comment_updated_at: ${{ steps.result.outputs.comment_updated_at }}
+      report_sha256: ${{ steps.result.outputs.report_sha256 }}
     steps:
       - name: Check out trusted main, never candidate artifacts
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: main
           persist-credentials: false
+      - name: Set up Homebrew without write credentials
+        uses: Homebrew/actions/setup-homebrew@1e34f2e2acaa766b7efacb8c26352e6abbb023f9 # 2026.09.13.1
+        with:
+          token: ''
+          stable: true
+          debug: false
       - name: Set up Ruby without write credentials
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: '4.0.6'
-      - name: Refuse missing native policy or mismatched exact evidence before publication
+      - name: Install the explicit package extraction tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libarchive-tools
+          test -x /usr/bin/bsdtar
+      - name: Load offered casks without installing Moonshine
+        run: ruby tools/check_casks.rb --brew "$(command -v brew)" --tap evertonstz/moonshine-tap
+      - name: Check report and retained packages before exporting bound scalars
+        id: result
         env:
           MOONSHINE_PROMOTION_TARGET: ${{ inputs.target }}
           MOONSHINE_EXPECTED_STABLE: ${{ inputs.expected_stable }}
@@ -59,5 +82,57 @@ jobs:
           MOONSHINE_NATIVE_COMMENT_SHA256: ${{ inputs.comment_sha256 }}
           MOONSHINE_NATIVE_COMMENT_UPDATED_AT: ${{ inputs.comment_updated_at }}
           GH_TOKEN: ${{ github.token }}
-        run: ruby --disable=rubyopt tools/promotion_report.rb
-# No write-token or publication job: package prerequisites and protected publisher wiring remain unfinished.
+        run: ruby --disable=rubyopt tools/promotion_report.rb /usr/bin/bsdtar
+
+  publish:
+    needs: [prerequisites]
+    if: >-
+      github.repository == 'evertonstz/homebrew-moonshine-tap' &&
+      github.ref == 'refs/heads/main' &&
+      github.actor == 'evertonstz' &&
+      github.triggering_actor == 'evertonstz' &&
+      vars.MOONSHINE_STABLE_PROMOTION_ENABLED == 'true' &&
+      needs.prerequisites.outputs.status == 'eligible'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out the bound trusted base, never package or PR artifacts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.prerequisites.outputs.base_sha }}
+          persist-credentials: false
+      - name: Set up Ruby before minting write credentials
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          ruby-version: '4.0.6'
+      - name: Mint a short-lived token scoped to this tap
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.MOONSHINE_APP_ID }}
+          private-key: ${{ secrets.MOONSHINE_APP_PRIVATE_KEY }}
+          owner: evertonstz
+          repositories: homebrew-moonshine-tap
+          permission-contents: write
+          permission-pull-requests: write
+          permission-actions: read
+          permission-administration: read
+      - name: Recheck live source and reconstruct the exact protected promotion PR
+        env:
+          MOONSHINE_APP_TOKEN: ${{ steps.app.outputs.token }}
+          MOONSHINE_TOKEN_APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          MOONSHINE_APP_SLUG: ${{ vars.MOONSHINE_APP_SLUG }}
+          MOONSHINE_BOT_ID: ${{ vars.MOONSHINE_BOT_ID }}
+          MOONSHINE_CHECK_APP_ID: ${{ vars.MOONSHINE_CHECK_APP_ID }}
+          MOONSHINE_STABLE_PROMOTION_ENABLED: ${{ vars.MOONSHINE_STABLE_PROMOTION_ENABLED }}
+          MOONSHINE_BASE_SHA: ${{ needs.prerequisites.outputs.base_sha }}
+          MOONSHINE_PROMOTION_TARGET: ${{ needs.prerequisites.outputs.target }}
+          MOONSHINE_EXPECTED_STABLE: ${{ needs.prerequisites.outputs.expected_stable }}
+          MOONSHINE_NATIVE_COMMENT_ID: ${{ needs.prerequisites.outputs.comment_id }}
+          MOONSHINE_NATIVE_COMMENT_SHA256: ${{ needs.prerequisites.outputs.comment_sha256 }}
+          MOONSHINE_NATIVE_COMMENT_UPDATED_AT: ${{ needs.prerequisites.outputs.comment_updated_at }}
+          MOONSHINE_NATIVE_REPORT_SHA256: ${{ needs.prerequisites.outputs.report_sha256 }}
+        run: ruby --disable=rubyopt tools/github_release.rb promote

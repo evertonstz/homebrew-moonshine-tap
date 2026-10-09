@@ -280,15 +280,15 @@ class NativePolicyTest < Minitest::Test
     workflow = YAML.safe_load((ROOT/'.github/workflows/release-promote.yml').read)
     assert_equal({'contents' => 'read', 'pull-requests' => 'read'}, workflow['permissions'])
     assert_equal %w[comment_id comment_sha256 comment_updated_at expected_stable target], workflow.dig('on', 'workflow_dispatch', 'inputs').keys.sort
-    assert_equal ['prerequisites'], workflow['jobs'].keys
+    assert_equal %w[prerequisites publish], workflow['jobs'].keys
     job = workflow.dig('jobs', 'prerequisites')
     assert_includes job['if'], "github.triggering_actor == 'evertonstz'"
-    step = job['steps'].find { |item| item['run'] == 'ruby --disable=rubyopt tools/promotion_report.rb' }
+    step = job['steps'].find { |item| item['run'] == 'ruby --disable=rubyopt tools/promotion_report.rb /usr/bin/bsdtar' }
     assert_equal '${{ github.token }}', step.dig('env', 'GH_TOKEN')
     assert_equal '${{ inputs.comment_id }}', step.dig('env', 'MOONSHINE_NATIVE_COMMENT_ID')
     refute step['env'].key?('MOONSHINE_NATIVE_EVIDENCE')
-    refute_includes JSON.generate(workflow), 'secrets.'
-    refute_includes JSON.generate(workflow), 'permission-contents'
+    refute_includes JSON.generate(job), 'secrets.'
+    refute_includes JSON.generate(job), 'permission-contents'
   end
 
   def test_authenticated_report_catalog_and_expected_identity_preflight_precedes_github
