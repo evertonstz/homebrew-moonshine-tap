@@ -1,5 +1,40 @@
 {
-  "schema": 1,
-  "state": "unconfigured",
-  "reason": "The required native host matrix and evidence provenance have not been selected. Package checks and owner PR approval alone cannot authorize stable promotion."
+  "schema": 2,
+  "state": "configured",
+  "profile": "bazzite-owner-v1",
+  "owner": "evertonstz",
+  "installation": {
+    "token": "moonshine@untested",
+    "version": "UPSTREAM_VERSION+RECIPE_SHA256",
+    "baseline": "accepted_stable_recipe"
+  },
+  "host": {
+    "os_id": "bazzite",
+    "architecture": "x86_64",
+    "ostree_booted": true,
+    "selinux": "Enforcing",
+    "minimum_systemd": 257
+  },
+  "checks": [
+    "install",
+    "start",
+    "video",
+    "audio",
+    "keyboard_mouse",
+    "upgrade",
+    "uninstall",
+    "recovery",
+    "personal_data",
+    "administrator_state",
+    "unrelated_extensions",
+    "groups",
+    "lingering"
+  ],
+  "service_states": [
+    "enabled_running",
+    "enabled_stopped",
+    "disabled_running",
+    "disabled_stopped"
+  ],
+  "os_policy_updates": "observe_normal_updates"
 }

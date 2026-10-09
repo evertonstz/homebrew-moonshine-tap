@@ -47,4 +47,4 @@ jobs:
           MOONSHINE_EXPECTED_STABLE: ${{ inputs.expected_stable }}
           MOONSHINE_NATIVE_EVIDENCE: ${{ inputs.evidence }}
         run: ruby --disable=rubyopt tools/promotion_report.rb
-# No write-token or publication job exists while the native evidence policy is unconfigured.
+# No write-token or publication job exists until authenticated report handling and protected publication are implemented.
