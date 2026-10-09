@@ -324,7 +324,7 @@ class CandidateCatalogTest < Minitest::Test
       error = assert_raises(R::Failure) do
         MoonshinePromotion.projection(root: root, target: item.identity, expected_stable: R.current(root).identity)
       end
-      assert_includes error.message, 'explicit delivery policy'
+      assert_includes error.message, 'checked provenance'
       assert_equal before, MoonshineCandidate.tree(root)
     end
   end
