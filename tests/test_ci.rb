@@ -21,14 +21,14 @@ class CIValidationTest < Minitest::Test
     end
   end
 
-  def test_workflow_preserves_matrix_and_has_no_write_credentials
+  def test_workflow_is_linux_only_and_has_no_write_credentials
     workflow = YAML.safe_load((ROOT/'.github/workflows/ci.yml').read)
     assert_equal 'Moonshine CI', workflow['name']
     assert_equal({'contents' => 'read'}, workflow['permissions'])
     assert_equal %w[push pull_request workflow_dispatch], workflow['on'].keys
     jobs = workflow.fetch('jobs')
     checks = jobs.fetch('checks')
-    assert_equal %w[ubuntu-24.04 macos-15], checks.dig('strategy', 'matrix', 'os')
+    assert_equal %w[ubuntu-24.04], checks.dig('strategy', 'matrix', 'os')
     assert_equal false, checks.dig('strategy', 'fail-fast')
     assert_equal 10, checks['timeout-minutes']
     uses = jobs.values.flat_map { |job| job['steps'] }.select { |step| step['uses'] }
@@ -64,13 +64,17 @@ class CIValidationTest < Minitest::Test
     end
     refute checks.fetch('env').key?('MOONSHINE_TEST_RPM')
     step = checks.fetch('steps').find { |item| item['name'] == 'Select the explicit extraction tool' }
-    runner_os = RUBY_PLATFORM.include?('darwin') ? 'macOS' : 'Linux'
-    tool = runner_os == 'macOS' ? '/usr/bin/tar' : '/usr/bin/bsdtar'
+    run = step.fetch('run')
+    assert_includes run, 'tool=/usr/bin/bsdtar'
+    refute_includes run, 'macOS'
+    tool = RUBY_PLATFORM.include?('darwin') ? '/usr/bin/tar' : '/usr/bin/bsdtar'
+    # Exercise environment initialization locally without requiring a Linux tool path on macOS.
+    run = run.sub('tool=/usr/bin/bsdtar', "tool=#{tool}")
     Dir.mktmpdir do |directory|
       temporary = Pathname(directory)/'runner temp'
       output = Pathname(directory)/'job-env'
-      env = {'RUNNER_OS' => runner_os, 'RUNNER_TEMP' => temporary.to_s, 'GITHUB_ENV' => output.to_s}
-      stdout, stderr, status = Open3.capture3(env, 'bash', '-euo', 'pipefail', '-c', step.fetch('run'))
+      env = {'RUNNER_OS' => 'Linux', 'RUNNER_TEMP' => temporary.to_s, 'GITHUB_ENV' => output.to_s}
+      stdout, stderr, status = Open3.capture3(env, 'bash', '-euo', 'pipefail', '-c', run)
       assert status.success?, stdout + stderr
       assert_equal "MOONSHINE_TEST_BSDTAR=#{tool}\nMOONSHINE_TEST_RPM=#{temporary}/moonshine.rpm\n", output.read
     end
