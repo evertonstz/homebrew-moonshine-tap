@@ -11,13 +11,22 @@ name: Moonshine exact candidate promotion gate
         description: Current accepted stable recipe SHA-256
         required: true
         type: string
-      evidence:
-        description: Native evidence JSON (not package-only CI)
+      comment_id:
+        description: Owner-authored native report PR comment ID in this tap
+        required: true
+        type: string
+      comment_sha256:
+        description: SHA-256 of the exact raw comment body
+        required: true
+        type: string
+      comment_updated_at:
+        description: Exact GitHub comment update timestamp
         required: true
         type: string
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: moonshine-release-update
@@ -28,7 +37,8 @@ jobs:
     if: >-
       github.repository == 'evertonstz/homebrew-moonshine-tap' &&
       github.ref == 'refs/heads/main' &&
-      github.actor == 'evertonstz'
+      github.actor == 'evertonstz' &&
+      github.triggering_actor == 'evertonstz'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -45,6 +55,9 @@ jobs:
         env:
           MOONSHINE_PROMOTION_TARGET: ${{ inputs.target }}
           MOONSHINE_EXPECTED_STABLE: ${{ inputs.expected_stable }}
-          MOONSHINE_NATIVE_EVIDENCE: ${{ inputs.evidence }}
+          MOONSHINE_NATIVE_COMMENT_ID: ${{ inputs.comment_id }}
+          MOONSHINE_NATIVE_COMMENT_SHA256: ${{ inputs.comment_sha256 }}
+          MOONSHINE_NATIVE_COMMENT_UPDATED_AT: ${{ inputs.comment_updated_at }}
+          GH_TOKEN: ${{ github.token }}
         run: ruby --disable=rubyopt tools/promotion_report.rb
 # No write-token or publication job exists until authenticated report handling and protected publication are implemented.

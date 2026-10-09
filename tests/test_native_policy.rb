@@ -58,7 +58,290 @@ class NativePolicyTest < Minitest::Test
            'GITHUB_REF' => 'refs/heads/main', 'GITHUB_ACTOR' => 'evertonstz', 'GITHUB_TRIGGERING_ACTOR' => 'evertonstz',
            'MOONSHINE_PROMOTION_TARGET' => item.identity, 'MOONSHINE_EXPECTED_STABLE' => R.current(root).identity,
            'MOONSHINE_NATIVE_EVIDENCE' => evidence.is_a?(String) ? evidence : JSON.generate(evidence)}.merge(environment)
+    %w[MOONSHINE_NATIVE_COMMENT_ID MOONSHINE_NATIVE_COMMENT_SHA256 MOONSHINE_NATIVE_COMMENT_UPDATED_AT].each { |name| env[name] = nil unless environment.key?(name) }
     Open3.capture3(env, RbConfig.ruby, '--disable=rubyopt', (root/'tools/promotion_report.rb').to_s)
+  end
+
+  def owner_source(evidence)
+    body = "Moonshine native report v1\n\n" + JSON.generate(evidence) + "\n"
+    prefix = '/repos/evertonstz/homebrew-moonshine-tap'
+    replies = {
+      prefix => {'id' => 42, 'full_name' => 'evertonstz/homebrew-moonshine-tap', 'default_branch' => 'main',
+                 'owner' => {'login' => 'evertonstz', 'type' => 'User', 'id' => 71}},
+      "#{prefix}/issues/comments/91" => {'id' => 91, 'url' => "https://api.github.com#{prefix}/issues/comments/91",
+        'issue_url' => "https://api.github.com#{prefix}/issues/7", 'body' => body,
+        'user' => {'login' => 'evertonstz', 'type' => 'User', 'id' => 71},
+        'created_at' => '2026-01-01T12:00:01Z', 'updated_at' => '2026-01-01T12:00:01Z'},
+      "#{prefix}/pulls/7" => {'number' => 7, 'base' => {'repo' => {'full_name' => 'evertonstz/homebrew-moonshine-tap'}}}
+    }
+    request = {'comment_id' => 91, 'body_sha256' => Digest::SHA256.hexdigest(body), 'updated_at' => '2026-01-01T12:00:01Z'}
+    api = Object.new
+    api.define_singleton_method(:call) do |method, path, *_args, **_keywords|
+      raise 'Unexpected write at native report boundary' unless method == 'GET'
+      Marshal.load(Marshal.dump(replies.fetch(path)))
+    end
+    [request, api, replies]
+  end
+
+  def test_github_owner_report_origin_matches_without_enabling_publication
+    fixture do |root, item, evidence|
+      origin, api, _replies = owner_source(evidence)
+      before = MoonshineCandidate.tree(root)
+      result = MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity,
+                                        origin: origin, api: api)
+      assert_equal true, result['owner_report_authenticated']
+      assert_equal 91, result.dig('origin', 'comment_id')
+      assert_equal 71, result.dig('origin', 'owner_id')
+      assert_equal 42, result.dig('origin', 'repository_id')
+      assert_equal 7, result.dig('origin', 'pr_number')
+      assert_equal false, result['publication_enabled']
+      assert_equal false, result['native_acceptance_verified']
+      error = assert_raises(R::Failure) do
+        MoonshinePromotion.patch(root: root, target: item.identity, expected_stable: R.current(root).identity,
+                                origin: origin, api: api)
+      end
+      assert_includes error.message, 'Protected promotion publisher is not implemented'
+      assert_equal before, MoonshineCandidate.tree(root)
+    end
+  end
+
+  def test_github_report_rejects_impersonated_owner_and_wrong_repository_or_pr
+    fixture do |root, item, evidence|
+      before = MoonshineCandidate.tree(root)
+      changes = [
+        [0, ['owner', 'login'], 'someone-else'], [0, ['owner', 'type'], 'Organization'],
+        [0, ['full_name'], 'someone-else/homebrew-moonshine-tap'],
+        [1, ['id'], 92], [1, ['id'], 91.0], [1, ['user', 'login'], 'someone-else'],
+        [1, ['user', 'id'], 72], [1, ['user', 'id'], 71.0], [1, ['user', 'type'], 'Bot'],
+        [1, ['url'], 'https://attacker.invalid/comments/91'],
+        [1, ['issue_url'], 'https://api.github.com/repos/attacker/tap/issues/7'],
+        [2, ['number'], 8], [2, ['base', 'repo', 'full_name'], 'attacker/tap']
+      ]
+      changes.each do |index, keys, value|
+        origin, api, replies = owner_source(evidence)
+        object = replies.values[index]
+        parent = keys[0...-1].reduce(object) { |current, key| current.fetch(key) }
+        parent[keys.last] = value
+        assert_raises(R::Failure, MoonshineGitHub::Failure) do
+          MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity,
+                                    origin: origin, api: api)
+        end
+        assert_equal before, MoonshineCandidate.tree(root)
+      end
+    end
+  end
+
+  def test_authenticated_comment_edits_missing_records_and_malformed_bodies_refuse
+    fixture do |root, item, evidence|
+      before = MoonshineCandidate.tree(root)
+      [[:body, nil], [:body, 'not-a-report'], [:body, ' ' * 33000],
+       [:body, "Moonshine native report v1\n\n{\"schema\":1,\"schema\":2}"],
+       [:updated_at, '2026-01-01T12:00:02Z'], [:created_at, '2026-01-02T12:00:01Z']].each do |name, value|
+        origin, api, replies = owner_source(evidence)
+        comment = replies.values[1]
+        comment[name.to_s] = value
+        assert_raises(R::Failure) do
+          MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity, origin: origin, api: api)
+        end
+        assert_equal before, MoonshineCandidate.tree(root)
+      end
+      origin, api, replies = owner_source(evidence)
+      replies[replies.keys[1]] = nil
+      assert_raises(R::Failure) do
+        MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity, origin: origin, api: api)
+      end
+    end
+  end
+
+  def test_origin_changed_during_validation_cannot_be_used_as_authenticated_evidence
+    fixture do |root, item, evidence|
+      before = MoonshineCandidate.tree(root)
+      origin, api, replies = owner_source(evidence)
+      transport = api.method(:call)
+      reads = 0
+      api.define_singleton_method(:call) do |method, path, *args, **keywords|
+        if path.end_with?('/issues/comments/91')
+          reads += 1
+          replies.fetch(path)['body'] += ' ' if reads == 2
+        end
+        transport.call(method, path, *args, **keywords)
+      end
+      error = assert_raises(R::Failure) do
+        MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity, origin: origin, api: api)
+      end
+      assert_includes error.message, 'comment changed'
+      assert_equal before, MoonshineCandidate.tree(root)
+    end
+  end
+
+  def test_origin_repository_identity_changing_during_validation_refuses
+    fixture do |root, item, evidence|
+      origin, api, replies = owner_source(evidence)
+      transport = api.method(:call)
+      reads = 0
+      api.define_singleton_method(:call) do |method, path, *args, **keywords|
+        if path == '/repos/evertonstz/homebrew-moonshine-tap'
+          reads += 1
+          replies.fetch(path)['id'] = 43 if reads == 2
+        end
+        transport.call(method, path, *args, **keywords)
+      end
+      error = assert_raises(R::Failure) do
+        MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity, origin: origin, api: api)
+      end
+      assert_includes error.message, 'origin changed'
+    end
+  end
+
+  def test_rechecking_prior_origin_refuses_even_semantically_equivalent_owner_edits
+    fixture do |root, item, evidence|
+      origin, api, replies = owner_source(evidence)
+      first = MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity, origin: origin, api: api)
+      assert_equal true, first['owner_report_authenticated']
+      replies.values[1]['body'] = "Moonshine native report v1\n\n" + JSON.pretty_generate(evidence) + "\n"
+      error = assert_raises(R::Failure) do
+        MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity, origin: origin, api: api)
+      end
+      assert_includes error.message, 'comment changed'
+    end
+  end
+
+  def test_malformed_origin_requests_and_mixed_local_claims_refuse_before_github_reads
+    fixture do |root, item, evidence|
+      origin, _api, _replies = owner_source(evidence)
+      api = Object.new
+      api.define_singleton_method(:call) { |*| raise 'Unexpected network call for malformed origin' }
+      [{'comment_id' => '91'}, {'comment_id' => 0}, {'body_sha256' => 'not-a-digest'},
+       {'updated_at' => '2026-02-30T12:00:01Z'}, {'approval' => true}].each do |change|
+        assert_raises(R::Failure, MoonshineGitHub::Failure) do
+          MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity,
+                                    origin: origin.merge(change), api: api)
+        end
+      end
+      assert_raises(R::Failure) do
+        MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity,
+                                  evidence: evidence, origin: origin, api: api)
+      end
+    end
+  end
+
+  def test_authenticated_owner_comment_still_requires_passing_matching_native_claims
+    fixture do |root, item, evidence|
+      [{'recipe_sha256' => 'f' * 64}, {'policy_sha256' => 'f' * 64}, {'baseline_recipe_sha256' => 'f' * 64},
+       {'checks' => evidence['checks'].merge('video' => 'failed')}, {'observed_at' => '2026-01-01T12:00:02Z'}].each do |change|
+        origin, api, _replies = owner_source(evidence.merge(change))
+        assert_raises(R::Failure) do
+          MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity, origin: origin, api: api)
+        end
+      end
+    end
+  end
+
+  def authenticated_cli(root, item, origin, replies, environment = {})
+    data = root.parent/'github-replies.json'
+    data.write(JSON.generate(replies))
+    env = {'RUBYOPT' => nil, 'RUBYLIB' => nil, 'GH_TOKEN' => nil, 'GITHUB_TOKEN' => nil,
+      'GITHUB_EVENT_NAME' => 'workflow_dispatch', 'GITHUB_REPOSITORY' => 'evertonstz/homebrew-moonshine-tap',
+      'GITHUB_REF' => 'refs/heads/main', 'GITHUB_ACTOR' => 'evertonstz', 'GITHUB_TRIGGERING_ACTOR' => 'evertonstz',
+      'MOONSHINE_PROMOTION_TARGET' => item.identity, 'MOONSHINE_EXPECTED_STABLE' => R.current(root).identity,
+      'MOONSHINE_NATIVE_EVIDENCE' => nil, 'MOONSHINE_NATIVE_COMMENT_ID' => origin['comment_id'].to_s,
+      'MOONSHINE_NATIVE_COMMENT_SHA256' => origin['body_sha256'], 'MOONSHINE_NATIVE_COMMENT_UPDATED_AT' => origin['updated_at']}.merge(environment)
+    script = <<~RUBY
+      require ARGV.fetch(0)
+      replies = JSON.parse(File.read(ARGV.fetch(1)))
+      api = MoonshineGitHub::API.new(token: 'x' * 20, transport: ->(method, path, data, token) {
+        raise 'Unexpected write at CLI transport' unless method == 'GET'
+        [200, JSON.generate(replies.fetch(path))]
+      })
+      exit MoonshinePromotionReport.main([], api: api)
+    RUBY
+    Open3.capture3(env, RbConfig.ruby, '--disable=rubyopt', '-e', script,
+                  (root/'tools/promotion_report.rb').to_s, data.to_s)
+  end
+
+  def test_owner_dispatch_cli_authenticates_a_checked_comment_without_write_credentials
+    fixture do |root, item, evidence|
+      origin, _api, replies = owner_source(evidence)
+      before = MoonshineCandidate.tree(root)
+      output, error, status = authenticated_cli(root, item, origin, replies)
+      assert_equal 1, status.exitstatus
+      assert_includes error, 'Protected promotion publisher is not implemented'
+      result = JSON.parse(output)
+      assert_equal true, result['owner_report_authenticated']
+      assert_equal origin['body_sha256'], result.dig('origin', 'body_sha256')
+      assert_equal false, result['publication_enabled']
+      assert_equal false, result['native_acceptance_verified']
+      assert_equal before, MoonshineCandidate.tree(root)
+    end
+  end
+
+  def test_promotion_workflow_passes_only_scalar_origin_with_read_only_credentials
+    require 'yaml'
+    workflow = YAML.safe_load((ROOT/'.github/workflows/release-promote.yml').read)
+    assert_equal({'contents' => 'read', 'pull-requests' => 'read'}, workflow['permissions'])
+    assert_equal %w[comment_id comment_sha256 comment_updated_at expected_stable target], workflow.dig('on', 'workflow_dispatch', 'inputs').keys.sort
+    assert_equal ['prerequisites'], workflow['jobs'].keys
+    job = workflow.dig('jobs', 'prerequisites')
+    assert_includes job['if'], "github.triggering_actor == 'evertonstz'"
+    step = job['steps'].find { |item| item['run'] == 'ruby --disable=rubyopt tools/promotion_report.rb' }
+    assert_equal '${{ github.token }}', step.dig('env', 'GH_TOKEN')
+    assert_equal '${{ inputs.comment_id }}', step.dig('env', 'MOONSHINE_NATIVE_COMMENT_ID')
+    refute step['env'].key?('MOONSHINE_NATIVE_EVIDENCE')
+    refute_includes JSON.generate(workflow), 'secrets.'
+    refute_includes JSON.generate(workflow), 'permission-contents'
+  end
+
+  def test_authenticated_report_catalog_and_expected_identity_preflight_precedes_github
+    fixture do |root, item, evidence|
+      origin, _api, _replies = owner_source(evidence)
+      api = Object.new
+      api.define_singleton_method(:call) { |*| raise 'Unexpected network call before local preflight' }
+      [['not-a-recipe', R.current(root).identity], [item.identity, 'f' * 64]].each do |target, stable|
+        assert_raises(R::Failure) do
+          MoonshinePromotion.assess(root: root, target: target, expected_stable: stable, origin: origin, api: api)
+        end
+      end
+      (root/'Casks/moonshine@0.16.1.rb').delete
+      error = assert_raises(RuntimeError) do
+        MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity, origin: origin, api: api)
+      end
+      assert_includes error.message, 'Generated cask is stale: Casks/moonshine@0.16.1.rb'
+    end
+  end
+
+  def test_authenticated_cli_refuses_forged_source_mixed_requests_and_nonowner_reruns
+    fixture do |root, item, evidence|
+      origin, _api, replies = owner_source(evidence)
+      before = MoonshineCandidate.tree(root)
+      {'GITHUB_TRIGGERING_ACTOR' => 'someone-else', 'MOONSHINE_NATIVE_EVIDENCE' => JSON.generate(evidence),
+       'MOONSHINE_NATIVE_COMMENT_ID' => '91;code', 'MOONSHINE_NATIVE_COMMENT_SHA256' => '',
+       'MOONSHINE_NATIVE_COMMENT_UPDATED_AT' => 'invalid-time'}.each do |key, value|
+        output, error, status = authenticated_cli(root, item, origin, replies, key => value)
+        assert_equal 1, status.exitstatus
+        assert_empty output
+        assert_includes error, 'Promotion refused before write credentials'
+        assert_equal before, MoonshineCandidate.tree(root)
+      end
+      replies.values[1]['user']['id'] = 72
+      output, error, status = authenticated_cli(root, item, origin, replies)
+      assert_equal 1, status.exitstatus
+      assert_empty output
+      assert_includes error, 'not an authenticated owner comment'
+    end
+  end
+
+  def test_newly_attested_duplicate_json_fields_are_sanitized_even_with_matching_source_digest
+    fixture do |root, item, evidence|
+      origin, api, replies = owner_source(evidence)
+      body = "Moonshine native report v1\n\n{\"schema\":1,\"schema\":1,\"private\":\"do-not-echo-this\"}"
+      replies.values[1]['body'] = body
+      origin['body_sha256'] = Digest::SHA256.hexdigest(body)
+      error = assert_raises(R::Failure) do
+        MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity, origin: origin, api: api)
+      end
+      assert_equal 'Duplicate native evidence field', error.message
+      refute_includes error.message, 'do-not-echo-this'
+    end
   end
 
   def test_policy_cannot_be_read_through_a_symlinked_reference_directory

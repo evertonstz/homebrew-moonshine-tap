@@ -1,5 +1,5 @@
 # Exact retained-candidate projection. Positive publication requires a protected publisher.
-require_relative 'native_evidence'
+require_relative 'native_origin'
 
 module MoonshinePromotion
   extend self
@@ -37,12 +37,18 @@ module MoonshinePromotion
     (before.keys | after.keys).sort.filter_map { |name| [name, after[name]] unless before[name] == after[name] }.to_h
   end
 
-  def assess(root:, target:, expected_stable:, evidence:)
-    MoonshineNativeEvidence.assess(root: root, target: target, expected_stable: expected_stable, evidence: evidence)
+  def assess(root:, target:, expected_stable:, evidence: nil, origin: nil, api: nil)
+    MoonshineReleases.check(origin.nil? || evidence.nil?, 'Cannot mix local claims with an authenticated report origin')
+    if origin
+      MoonshineNativeOrigin.assess(root: root, target: target, expected_stable: expected_stable, origin: origin, api: api)
+    else
+      MoonshineNativeEvidence.assess(root: root, target: target, expected_stable: expected_stable, evidence: evidence)
+                            .merge('owner_report_authenticated' => false)
+    end
   end
 
-  def patch(root:, target:, expected_stable:, evidence:)
-    assess(root: root, target: target, expected_stable: expected_stable, evidence: evidence)
+  def patch(root:, target:, expected_stable:, evidence: nil, origin: nil, api: nil)
+    assess(root: root, target: target, expected_stable: expected_stable, evidence: evidence, origin: origin, api: api)
     # A matching report cannot authenticate its own origin or approve a protected promotion head.
     raise MoonshineReleases::Failure, 'Protected promotion publisher is not implemented; report matching cannot authorize publication'
   end
