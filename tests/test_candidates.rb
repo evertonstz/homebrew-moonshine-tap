@@ -127,6 +127,27 @@ class CandidateCatalogTest < Minitest::Test
     end
   end
 
+  def test_late_candidate_payload_refuses_after_another_checked_selection
+    fixture do |root|
+      first = advance(root, 'a')
+      helper = root/'lib/moonshine_host.rb'
+      helper.open('a') { |file| file.puts '# proposal from an earlier validation job' }
+      late = C.build(root, first.release)
+      pending = C.patch(root: root, release: late.release, source: 'b' * 40, expected_current: first.identity)
+      assert pending.key?("releases/candidates/#{late.identity}/helper.rb")
+      helper.open('a') { |file| file.puts '# newer reviewed main inputs' }
+      current = advance(root, 'c')
+      before = MoonshineCandidate.tree(root)
+      error = assert_raises(R::Failure) do
+        C.patch(root: root, release: late.release, source: 'b' * 40, expected_current: first.identity)
+      end
+      assert_includes error.message, 'Candidate selection changed'
+      assert_equal current.identity, C.catalog(root)['current']
+      refute (root/'releases/candidates'/late.identity).exist?
+      assert_equal before, MoonshineCandidate.tree(root)
+    end
+  end
+
   def test_candidate_loading_and_patch_reconstruction_never_execute_development_helper
     fixture do |root|
       sentinel = root/'unexpected-execution'
@@ -171,6 +192,105 @@ class CandidateCatalogTest < Minitest::Test
       ensure
         FileUtils.remove_entry_secure(staged)
       end
+    end
+  end
+
+  def discover(root, source)
+    rpm = ENV['MOONSHINE_TEST_RPM']
+    skip 'Official package is supplied by mandatory CI' unless rpm && File.file?(rpm)
+    release = R.development(root).release
+    client = Object.new
+    client.define_singleton_method(:json) do |url|
+      raise 'Wrong official API' unless url == MoonshineUpdate::API
+      {'draft' => false, 'prerelease' => false, 'tag_name' => "v#{release['version']}",
+       'assets' => [{'id' => 123, 'name' => release['filename'], 'state' => 'uploaded', 'size' => File.size(rpm),
+                     'browser_download_url' => MoonshineUpdate.download_url(release), 'digest' => "sha256:#{release['sha256']}"}]}
+    end
+    client.define_singleton_method(:download) do |url, path|
+      raise 'Unexpected package URL' unless url == MoonshineUpdate.download_url(release)
+      FileUtils.cp(rpm, path)
+    end
+    checker = MoonshineUpdate::Contract.new(bsdtar: ENV.fetch('MOONSHINE_TEST_BSDTAR'))
+    MoonshineUpdate::Updater.new(root: root, client: client, inspector: checker, source_sha: source * 40).run
+  end
+
+  def test_repeated_discovery_and_publication_commits_do_not_form_a_loop
+    fixture do |root|
+      before = MoonshineCandidate.tree(root)
+      first = discover(root, 'a')
+      assert_equal 'eligible', first['status'], first.inspect
+      repeated = discover(root, 'b')
+      assert_equal 'eligible', repeated['status'], repeated.inspect
+      assert_equal first['recipe_sha256'], repeated['recipe_sha256']
+      assert_nil repeated['expected_current']
+      assert_equal before, MoonshineCandidate.tree(root)
+      apply(root, C.patch(root: root, release: first['release'], source: first['source_sha'], expected_current: nil))
+      selected = C.catalog(root)
+      ['a', 'c'].each do |source|
+        before = MoonshineCandidate.tree(root)
+        assert_equal 'unchanged', discover(root, source)['status']
+        assert_equal selected, C.catalog(root)
+        assert_equal before, MoonshineCandidate.tree(root)
+      end
+      (root/'README.md').open('a') { |file| file.puts '\nUnrelated documentation merge.' }
+      (root/'tests/unrelated.rb').write('# unrelated test-only merge')
+      before = MoonshineCandidate.tree(root)
+      assert_equal 'unchanged', discover(root, 'd')['status']
+      assert_equal selected, C.catalog(root)
+      assert_equal before, MoonshineCandidate.tree(root)
+      assert_equal 1, selected['selections'].length
+    end
+  end
+
+  def test_one_fix_merge_publishes_only_its_final_recipe_and_unchanged_rpm
+    fixture do |root|
+      first = advance(root, 'a')
+      accepted = R.recipes(root).map { |item| [item.identity, item.release] }
+      original = C.catalog(root)
+      helper = root/'lib/moonshine_host.rb'
+      helper.open('a') { |file| file.puts '# first reviewed fix in the PR' }
+      intermediate = C.build(root, first.release).identity
+      (root/'lib/moonshine_token_guard.rb').open('a') { |file| file.puts '# second reviewed fix in the same PR' }
+      report = discover(root, 'b')
+      assert_equal 'eligible', report['status'], report.inspect
+      assert_equal first.identity, report['expected_current']
+      assert_equal first.release, report['release']
+      refute_equal intermediate, report['recipe_sha256']
+      assert_equal original, C.catalog(root)
+      changes = C.patch(root: root, release: report['release'], source: report['source_sha'], expected_current: first.identity)
+      apply(root, changes)
+      data = C.catalog(root)
+      assert_equal [report['recipe_sha256'], first.identity], data.values_at('current', 'previous')
+      assert_equal [first.identity, report['recipe_sha256']], data['history'].map { |record| record['identity'] }
+      assert_equal 'b' * 40, data['history'].last['source_sha']
+      assert_equal 2, data['selections'].length
+      refute (root/'releases/candidates'/intermediate).exist?
+      assert_equal accepted, R.recipes(root).map { |item| [item.identity, item.release] }
+      before = MoonshineCandidate.tree(root)
+      assert_equal 'unchanged', discover(root, 'c')['status']
+      assert_equal before, MoonshineCandidate.tree(root)
+    end
+  end
+
+  def test_later_main_recreating_an_expired_recipe_cannot_automatically_reselect_it
+    fixture do |root|
+      helper = root/'lib/moonshine_host.rb'
+      original = helper.binread
+      first = advance(root, 'a')
+      helper.open('a') { |file| file.puts '# second candidate' }
+      advance(root, 'b')
+      helper.open('a') { |file| file.puts '# third candidate' }
+      current = advance(root, 'c')
+      refute (root/'releases/candidates'/first.identity).exist?
+      helper.binwrite(original)
+      assert_equal first.identity, C.build(root, first.release).identity
+      before = MoonshineCandidate.tree(root)
+      result = discover(root, 'd')
+      assert_equal 'review_required', result['status'], result.inspect
+      assert_includes result['reason'], 'Superseded recipe requires owner-approved reselection'
+      assert_equal current.identity, C.catalog(root)['current']
+      refute (root/'releases/candidates'/first.identity).exist?
+      assert_equal before, MoonshineCandidate.tree(root)
     end
   end
 
