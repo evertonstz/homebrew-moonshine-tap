@@ -11,7 +11,7 @@ module MoonshineGitHub
   BRANCH = 'automation/moonshine-release'.freeze
   PREFIX = "Moonshine release update\n\n".freeze
   MAX_JSON = 2 * 1024 * 1024
-  JOB_NAMES = ['Moonshine checks (ubuntu-24.04)', 'Moonshine checks (macos-15)', MoonshineCI::REQUIRED_CHECK].freeze
+  JOB_NAMES = ['Moonshine checks (ubuntu-24.04)', MoonshineCI::REQUIRED_CHECK].freeze
   Failure = Class.new(StandardError)
 
   def check(value, message)

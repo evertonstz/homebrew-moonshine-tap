@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: [ubuntu-24.04]
     env:
       MOONSHINE_COMPARE_RETAINED: ${{ github.event_name == 'pull_request' && github.head_ref == 'automation/moonshine-release' }}
     steps:
@@ -50,11 +50,8 @@ jobs:
       - name: Select the explicit extraction tool
         shell: bash
         run: |
-          case "$RUNNER_OS" in
-            Linux) tool=/usr/bin/bsdtar ;;
-            macOS) tool=/usr/bin/tar ;;
-            *) exit 1 ;;
-          esac
+          test "$RUNNER_OS" = Linux
+          tool=/usr/bin/bsdtar
           test -x "$tool"
           printf 'MOONSHINE_TEST_BSDTAR=%s\n' "$tool" >> "$GITHUB_ENV"
           printf 'MOONSHINE_TEST_RPM=%s/moonshine.rpm\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"

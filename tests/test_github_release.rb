@@ -31,7 +31,7 @@ class GitHubReleaseTest < Minitest::Test
         'repository' => {'full_name' => MoonshineGitHub::REPOSITORY}, 'head_repository' => {'full_name' => MoonshineGitHub::REPOSITORY},
         'pull_requests' => [{'number' => 7}]}
       @latest = {'total_count' => 1, 'workflow_runs' => [@run.dup]}
-      @jobs = {'total_count' => 3, 'jobs' => MoonshineGitHub::JOB_NAMES.map do |name|
+      @jobs = {'total_count' => MoonshineGitHub::JOB_NAMES.length, 'jobs' => MoonshineGitHub::JOB_NAMES.map do |name|
         steps = name == MoonshineCI::REQUIRED_CHECK ? ['Require all prerequisite jobs to succeed'] :
           ['Check source and all generated casks', 'Load every offered token with Homebrew',
            'Inspect and extract every retained official RPM', 'Run all regressions with mandatory official RPM extraction',
@@ -243,6 +243,22 @@ class GitHubReleaseTest < Minitest::Test
     assert_equal({'status' => 'merged', 'number' => 7, 'head_sha' => HEAD, 'merge_sha' => 'f' * 40}, controller.merge(base: BASE, run_id: 101))
     assert_equal [['PUT', '/pulls/7/merge', {'sha' => HEAD, 'merge_method' => 'squash'}]], api.writes
     assert_operator api.reads.count('/branches/main/protection'), :>=, 2
+  end
+
+  def test_linux_only_job_contract_rejects_missing_duplicate_or_obsolete_jobs
+    assert_equal ['Moonshine checks (ubuntu-24.04)', MoonshineCI::REQUIRED_CHECK], MoonshineGitHub::JOB_NAMES
+    %i[missing duplicate obsolete].each do |fault|
+      api, controller = merge_fixture
+      jobs = api.jobs['jobs']
+      case fault
+      when :missing then jobs.shift
+      when :duplicate then jobs << jobs.first.dup
+      when :obsolete then jobs << jobs.first.merge('name' => 'Moonshine checks (macos-15)')
+      end
+      api.jobs['total_count'] = jobs.length
+      assert_raises(MoonshineGitHub::Failure) { controller.merge(base: BASE, run_id: 101) }
+      assert_empty api.writes
+    end
   end
 
   def test_skipped_failed_missing_cancelled_pending_and_neutral_ci_cannot_merge

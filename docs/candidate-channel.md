@@ -49,6 +49,6 @@ OS and SELinux-policy update compatibility remains under observation through nor
 
 ## Validation boundary
 
-Hosted CI loads the shipping casks and an isolated generated untested cask on Linux and macOS. It checks full Homebrew version strings, official URLs and RPM checksums, then extracts the selected official packages. The isolated check restores its checkout afterward. It does not install Moonshine, change a native host or select a production candidate.
+Hosted CI loads the shipping casks and an isolated generated untested cask on Linux. It checks full Homebrew version strings, official URLs and RPM checksums, then extracts the selected official packages. The isolated check restores its checkout afterward. It does not install Moonshine, change a native host or select a production candidate.
 
 The source scriptlet approvals use SHA-256 after removing trailing newline bytes. The helper checks exact role and `/bin/sh` interpreter arguments. It executes package-extracted scripts only during the authorized installation lifecycle. Cached extracted scripts remain necessary for uninstall and recovery.
