@@ -72,6 +72,172 @@ class CandidateControllerTest < Minitest::Test
     end
   end
 
+  def test_candidate_publication_can_resume_each_refused_write_without_changing_either_channel
+    %w[/git/trees /git/commits /git/refs /pulls].each do |path|
+      fixture(current: true) do |root, api, controller, data|
+        before = MoonshineCandidate.tree(root)
+        api.fail_write = path
+        assert_raises(G::Failure, path) { publish(controller, data) }
+        assert_equal before, MoonshineCandidate.tree(root), path
+        assert_equal BASE, api.base
+        assert_empty api.pulls
+        path == '/pulls' ? assert_equal(HEAD, api.branch) : assert_nil(api.branch)
+        api.fail_write = nil
+        assert_equal 'created', publish(controller, data)['status']
+        writes = api.writes.dup
+        assert_equal 'reused', publish(controller, data)['status']
+        assert_equal writes, api.writes
+        assert_equal 1, api.pulls.length
+        assert_equal before, MoonshineCandidate.tree(root)
+      end
+    end
+  end
+
+  def test_candidate_publication_recovers_lost_write_responses_without_overwriting_the_branch
+    %w[/git/trees /git/commits /git/refs /pulls].each do |path|
+      fixture(current: true) do |root, api, controller, data|
+        before = MoonshineCandidate.tree(root)
+        lose_response = true
+        transport = api.method(:call)
+        api.define_singleton_method(:call) do |method, endpoint, value = nil, missing: false|
+          result = transport.call(method, endpoint, value, missing: missing)
+          if method == 'POST' && endpoint.end_with?(path) && lose_response
+            lose_response = false
+            raise G::Failure, 'Simulated lost GitHub response after accepting the write'
+          end
+          result
+        end
+        assert_raises(G::Failure, path) { publish(controller, data) }
+        assert_equal before, MoonshineCandidate.tree(root)
+        assert_equal BASE, api.base
+        %w[/git/refs /pulls].include?(path) ? assert_equal(HEAD, api.branch) : assert_nil(api.branch)
+        assert_equal path == '/pulls' ? 1 : 0, api.pulls.length
+        resumed = publish(controller, data)
+        assert_equal path == '/pulls' ? 'reused' : 'created', resumed['status']
+        assert_equal 1, api.pulls.length
+        assert_equal 1, api.writes.count { |method, endpoint, _| method == 'POST' && endpoint == '/git/refs' }
+        writes = api.writes.dup
+        assert_equal 'reused', publish(controller, data)['status']
+        assert_equal writes, api.writes
+        assert_equal before, MoonshineCandidate.tree(root)
+      end
+    end
+  end
+
+  def test_late_candidate_job_cannot_publish_or_merge_after_main_advances
+    fixture(current: true) do |root, api, controller, data|
+      before = MoonshineCandidate.tree(root)
+      assert_equal 'created', publish(controller, data)['status']
+      writes = api.writes.dup
+      api.base = 'f' * 40
+      error = assert_raises(G::Failure) { publish(controller, data) }
+      assert_includes error.message, 'Default branch changed'
+      assert_raises(G::Failure) { controller.merge(base: BASE, run_id: 101) }
+      assert_equal writes, api.writes
+      assert_equal HEAD, api.branch
+      assert_equal before, MoonshineCandidate.tree(root)
+    end
+  end
+
+  def test_main_advancing_during_candidate_publication_never_creates_a_stale_pr
+    %w[/git/trees /git/refs].each do |path|
+      fixture(current: true) do |root, api, controller, data|
+        before = MoonshineCandidate.tree(root)
+        transport = api.method(:call)
+        api.define_singleton_method(:call) do |method, endpoint, value = nil, missing: false|
+          result = transport.call(method, endpoint, value, missing: missing)
+          @base = 'f' * 40 if method == 'POST' && endpoint.end_with?(path)
+          result
+        end
+        error = assert_raises(G::Failure, path) { publish(controller, data) }
+        assert_includes error.message, 'Default branch changed'
+        assert_empty api.pulls
+        refute api.writes.any? { |_, endpoint, _| endpoint == '/pulls' }
+        path == '/git/refs' ? assert_equal(HEAD, api.branch) : assert_nil(api.branch)
+        assert_equal before, MoonshineCandidate.tree(root)
+      end
+    end
+  end
+
+  def test_candidate_merge_refuses_changed_heads_and_superseded_ci
+    %i[pr_head branch_head run_head newer_run newer_attempt].each do |fault|
+      fixture(current: true) do |root, api, controller, data|
+        before = MoonshineCandidate.tree(root)
+        assert_equal 'created', publish(controller, data)['status']
+        writes = api.writes.dup
+        case fault
+        when :pr_head then api.pulls.first['head']['sha'] = 'f' * 40
+        when :branch_head then api.branch = 'f' * 40
+        when :run_head then api.run['head_sha'] = 'f' * 40
+        when :newer_run then api.latest['workflow_runs'].first['id'] = 102
+        when :newer_attempt then api.latest['workflow_runs'].first['run_attempt'] = 2
+        end
+        assert_raises(G::Failure, fault.to_s) { controller.merge(base: BASE, run_id: 101) }
+        assert_equal writes, api.writes
+        assert_equal BASE, api.base
+        assert_equal before, MoonshineCandidate.tree(root)
+      end
+    end
+  end
+
+  def test_candidate_publication_refuses_earlier_or_unrelated_main_history
+    %w[behind diverged wrong-ancestor].each do |fault|
+      fixture(current: true) do |root, api, controller, data|
+        before = MoonshineCandidate.tree(root)
+        transport = api.method(:call)
+        api.define_singleton_method(:call) do |method, endpoint, value = nil, missing: false|
+          if method == 'GET' && endpoint.include?('/compare/')
+            {'status' => fault == 'wrong-ancestor' ? 'ahead' : fault,
+             'merge_base_commit' => {'sha' => fault == 'wrong-ancestor' ? 'f' * 40 : 'd' * 40}}
+          else
+            transport.call(method, endpoint, value, missing: missing)
+          end
+        end
+        error = assert_raises(G::Failure, fault) { publish(controller, data) }
+        assert_includes error.message, 'Candidate source is not forward reviewed-main history'
+        assert_empty api.writes
+        assert_nil api.branch
+        assert_empty api.pulls
+        assert_equal before, MoonshineCandidate.tree(root)
+      end
+    end
+  end
+
+  def test_publication_of_the_already_selected_recipe_refuses_before_any_git_write
+    fixture(current: true) do |root, api, controller, data|
+      changes = C.patch(root: root, release: data['release'], source: BASE, expected_current: data['expected_current'])
+      changes.each do |name, bytes|
+        path = root/name
+        if bytes
+          path.dirname.mkpath
+          path.binwrite(bytes)
+        else
+          path.delete
+        end
+      end
+      MoonshineCask.generate(root: root, check: true)
+      selected = C.catalog(root)['current']
+      repeated = G.manifest(BASE, data['release'], 123, recipe: selected, expected_current: selected)
+      before = MoonshineCandidate.tree(root)
+      files = before.transform_values { |bytes| {'sha' => G.blob(bytes), 'mode' => '100644'} }
+      api = GitHubReleaseTest::FakeAPI.new(files, files, repeated)
+      api.define_singleton_method(:call) do |method, endpoint, value = nil, missing: false|
+        if method == 'GET' && endpoint.end_with?("/compare/#{BASE}...#{BASE}")
+          {'status' => 'identical', 'merge_base_commit' => {'sha' => BASE}}
+        else
+          super(method, endpoint, value, missing: missing)
+        end
+      end
+      controller = G::Controller.new(api: api, root: root, bot_slug: 'moonshine-updates', bot_id: 12, check_app_id: 15368)
+      error = assert_raises(G::Failure) { publish(controller, repeated) }
+      assert_includes error.message, 'Candidate is already selected; do not publish a loop'
+      assert_empty api.writes
+      assert_nil api.branch
+      assert_empty api.pulls
+      assert_equal before, MoonshineCandidate.tree(root)
+    end
+  end
+
   def test_checked_main_trigger_requires_actual_successful_exact_head_jobs
     fixture do |root, api, controller, data|
       api.run.merge!('event' => 'push', 'head_branch' => 'main', 'head_sha' => BASE, 'pull_requests' => [])
