@@ -2,7 +2,9 @@
 
 The initial policy requires fresh owner-run checks on real Bazzite x86_64 with enforcing SELinux, an OSTree boot and systemd 257 or newer. Other eligible Atomic images remain untested. OS and SELinux-policy update compatibility remains under observation through normal updates. The policy does not require a forced update.
 
-The current validator checks report claims as data. It does not collect observations, contact a host, read private logs or authenticate the report's origin. A matching result reports `publication_enabled:false`, `native_acceptance_verified:false` and `host_installation:false`. The promotion gate still exits unsuccessfully because the protected publisher is not implemented. No report creates a patch or rotates either channel.
+Offline validation checks report claims as data and reports `owner_report_authenticated:false`. The source-checking mode reads an explicit owner-authored PR comment through GitHub's API. It checks the owner's numeric account identity and exact report record, then reports `owner_report_authenticated:true`. This authenticates an owner attestation without collecting observations, contacting a host or reading private logs.
+
+Both modes report `publication_enabled:false`, `native_acceptance_verified:false` and `host_installation:false`. The promotion gate still exits unsuccessfully because the protected publisher is not implemented. No report creates a patch or rotates either channel.
 
 ## Identity and provenance
 
@@ -16,7 +18,29 @@ The policy is `reference/native-policy.json`, schema 2, profile `bazzite-owner-v
 | `baseline_recipe_sha256` | Current accepted stable recipe used for native upgrade/recovery testing. A changed baseline invalidates the report's upgrade-path claims. |
 | `provenance` | Exactly `kind:owner-run-native` and `owner:evertonstz`. These are claims, not proof of authentication. |
 
-The read-only promotion entrypoint requires an owner workflow dispatch on trusted main and an owner rerun actor. The protected publisher must authenticate the request/report origin. It must check the exact report digest and owner approval of the final promotion head. A locally fabricated GitHub environment or owner name cannot authorize publication. That authenticated publication path remains unfinished.
+The read-only promotion entrypoint requires an owner workflow dispatch on trusted main and an owner rerun actor. Source-checking mode requires a GitHub-authenticated owner comment independently of those environment values. A locally fabricated GitHub environment or owner name cannot authorize publication. Protected positive publication and owner approval of the exact final promotion head remain unfinished.
+
+## Authenticated owner record
+
+The selected source is an explicit comment on an existing PR in `evertonstz/homebrew-moonshine-tap`. No issue creation, signing key or environment approval is required. The owner posts truthful report fields only when native tests are authorized and complete. These fields are public. Raw evidence logs, credentials, pairing data and host addresses must stay private.
+
+The raw comment body starts with `Moonshine native report v1`, two newline bytes, then the schema 1 report JSON. Do not wrap the body in Markdown fences. Bind the request to these three scalar inputs:
+
+| Workflow input | Meaning |
+| --- | --- |
+| `comment_id` | Positive GitHub comment ID. It is not the PR number. |
+| `comment_sha256` | SHA-256 of the exact `body` string from the GitHub response, including any trailing newline. |
+| `comment_updated_at` | Exact GitHub `updated_at` timestamp in UTC. |
+
+Calculate the body digest from the JSON response's `body` value. Do not hash the entire API response or a CLI rendering that adds newline bytes. The workflow also requires the exact candidate `target` and `expected_stable` recipe hashes.
+
+The reader uses bounded, certificate-checked HTTPS requests to `api.github.com` without redirects. It uses only `GET` requests. The workflow token has contents-read and pull-requests-read permissions, with no App write token or stored checkout credential.
+
+GitHub's repository owner and comment author must both be the selected `evertonstz` user with the same positive integer account ID. The requested comment ID, repository, PR and body digest must match. Missing, deleted, malformed, edited or foreign records refuse. Local cask and expected-recipe checks precede source access.
+
+After local report validation, the reader checks the source again. The receipt records the repository ID, owner ID, comment/PR IDs, body digest and creation/update timestamps. Future publication and merge must recheck that bound source with the trusted live API client. A previously printed receipt or `owner_report_authenticated:true` value is not authorization by itself.
+
+This receipt is a snapshot of the current record, not an immutable history of every edit. It cannot prove that the owner executed the reported observations or that a private log matches its digest. Exact-head approval, current-base/protection checks and the positive publisher remain separate requirements.
 
 ## Recorded host
 
