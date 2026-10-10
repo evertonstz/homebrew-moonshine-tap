@@ -2,6 +2,7 @@
 # Hosted read-only integration check. Restore the checkout after loading a private candidate.
 require 'optparse'
 require_relative '../lib/release_candidate'
+require_relative '../lib/promotion'
 require_relative 'check_casks'
 require_relative 'check_releases'
 

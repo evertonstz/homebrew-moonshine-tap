@@ -226,37 +226,42 @@ class StableDeliveryTest < Minitest::Test
   def test_hosted_private_check_loads_hash_deliveries_and_restores_the_entire_checkout
     NativePolicyTest.new('fixture').fixture do |root, target, _evidence|
       before = MoonshineCandidate.tree(root)
-      loaded = []
-      runner = lambda do |*args|
-        if args.first.is_a?(Array)
-          command = args.first
-          if command[1] == 'readall'
-            ['', '', Struct.new(:success?).new(true)]
+      # A fresh process must load only the shipping tool's own entrypoint.
+      # Loading controller test fixtures first would conceal missing requires.
+      script = <<~'RUBY'
+        require ARGV.fetch(0)
+        root = Pathname(ARGV.fetch(1))
+        loaded = []
+        runner = lambda do |*args|
+          if args.first.is_a?(Array)
+            command = args.first
+            if command[1] == 'readall'
+              ['', '', Struct.new(:success?).new(true)]
+            else
+              token = command.last.delete_prefix('evertonstz/moonshine-tap/')
+              body = (root/"Casks/#{token}.rb").read
+              data = {'token' => token, 'full_token' => command.last,
+                      'version' => body[/^  version "([^"\n]+)"$/, 1], 'sha256' => body[/^  sha256 "([^"\n]+)"$/, 1],
+                      'url' => body[/^  url "([^"\n]+)"$/, 1]}
+              data['url'] = data['url'].gsub('#{version}', data['version'])
+              loaded << token
+              [JSON.generate('casks' => [data]), '', Struct.new(:success?).new(true)]
+            end
           else
-            token = command.last.delete_prefix('evertonstz/moonshine-tap/')
-            body = (root/"Casks/#{token}.rb").read
-            data = {'token' => token, 'full_token' => command.last,
-                    'version' => body[/^  version "([^"\n]+)"$/, 1], 'sha256' => body[/^  sha256 "([^"\n]+)"$/, 1],
-                    'url' => body[/^  url "([^"\n]+)"$/, 1]}
-            # Legacy URLs interpolate only the declared concrete numeric version.
-            data['url'] = data['url'].gsub('#{version}', data['version'])
-            loaded << token
-            [JSON.generate('casks' => [data]), '', Struct.new(:success?).new(true)]
+            [JSON.generate('dependencies' => {}, 'inventory' => {}, 'protected' => {}, 'tags' => {}), '', Struct.new(:success?).new(true)]
           end
-        else
-          [JSON.generate('dependencies' => {}, 'inventory' => {}, 'protected' => {}, 'tags' => {}), '', Struct.new(:success?).new(true)]
         end
-      end
-      client = Object.new
-      client.define_singleton_method(:download) { |_url, path| path.binwrite('external package fixture') }
-      error = nil
-      begin
+        client = Object.new
+        client.define_singleton_method(:download) { |_url, path| path.binwrite('external package fixture') }
         report = MoonshineCandidateCheck.run(root: root, brew: RbConfig.ruby, tap: 'evertonstz/moonshine-tap',
           bsdtar: '/usr/bin/tar', source: 'b' * 40, runner: runner, client: client)
-      rescue StandardError => caught
-        error = caught
-      end
-      assert_nil error, error&.message
+        puts JSON.generate('report' => report, 'loaded' => loaded)
+      RUBY
+      output, error, status = Open3.capture3({'RUBYOPT' => nil, 'RUBYLIB' => nil}, RbConfig.ruby, '--disable=rubyopt',
+        '-e', script, (root/'tools/check_candidate.rb').to_s, root.to_s)
+      assert status.success?, error
+      result = JSON.parse(output)
+      loaded, report = result.values_at('loaded', 'report')
       assert_includes loaded, "moonshine@0.16.1-#{target.identity}"
       assert_equal false, report.dig('delivery_preview', 'publication_enabled')
       assert_equal false, report.dig('delivery_preview', 'native_acceptance_verified')
