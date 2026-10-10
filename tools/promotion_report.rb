@@ -33,7 +33,7 @@ module MoonshinePromotionReport
     end
     unless argv.empty?
       MoonshineReleases.check(result['owner_report_authenticated'] == true, 'Package prerequisites require authenticated report origin')
-      changes = MoonshinePromotion.projection(root: root, target: target, expected_stable: stable)
+      changes = MoonshinePromotion.projection(root: root, target: target, expected_stable: stable, api: api)
       MoonshineReleases.check(!changes.empty?, 'Recipe is already accepted; do not publish a promotion loop')
       base, _, status = runner.call('git', '-C', root.to_s, 'rev-parse', 'HEAD')
       MoonshineGitHub.check(status.success?, 'Cannot identify trusted promotion checkout')

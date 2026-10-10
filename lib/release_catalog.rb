@@ -9,7 +9,7 @@ require 'fileutils'
 module MoonshineReleases
   extend self
   class Failure < StandardError; end
-  Recipe = Struct.new(:release, :source, :scripts, :template, :identity, :helper_path, :approvals, keyword_init: true)
+  Recipe = Struct.new(:release, :source, :scripts, :template, :identity, :helper_path, :approvals, :delivery, keyword_init: true)
   MAX_SOURCE = 256 * 1024
   MAX_TEMPLATE = 1024 * 1024
   MAX_REFERENCE = 64 * 1024
@@ -94,15 +94,55 @@ module MoonshineReleases
     if names == ['previous']
       return {stable: nil, previous: parent/'previous'}
     end
-    data = JSON.parse(read_file(parent/'catalog.json', 8192), max_nesting: 10)
-    check(data.is_a?(Hash) && data.keys.sort == %w[previous schema stable] &&
-          data['schema'].is_a?(Integer) && data['schema'] == 1 && data['stable'] == 'stable' &&
-          [nil, 'previous'].include?(data['previous']), 'Unsupported release catalog schema')
+    data = catalog_data(root)
     expected = ['catalog.json', 'stable', *('previous' if data['previous']), *('candidates' if (parent/'candidates').exist? || (parent/'candidates').symlink?)].sort
     check(names == expected, 'Unexpected release-snapshot directory')
     {stable: parent/'stable', previous: (parent/'previous' if data['previous'])}
   rescue JSON::ParserError => e
     raise Failure, "Invalid release catalog: #{e.message}"
+  end
+
+  def catalog_data(root)
+    data = JSON.parse(read_file(Pathname(root)/'releases/catalog.json', 8192), max_nesting: 10,
+                      allow_duplicate_key: false, create_additions: false)
+    check(data.is_a?(Hash) && data['schema'].is_a?(Integer) && [1, 2].include?(data['schema']) &&
+          data.keys.sort == (data['schema'] == 1 ? %w[previous schema stable] : %w[deliveries previous schema stable]) &&
+          data['stable'] == 'stable' && [nil, 'previous'].include?(data['previous']), 'Unsupported release catalog schema')
+    if data['schema'] == 2
+      entries = data['deliveries']
+      check(entries.is_a?(Hash) && entries.keys.sort == ['stable', *('previous' if data['previous'])].sort,
+            'Unexpected accepted delivery slots')
+      entries.each_value do |entry|
+        check(entry.is_a?(Hash) && entry.keys.sort == %w[identity source_sha style] &&
+              %w[legacy recipe].include?(entry['style']), 'Unexpected accepted delivery fields')
+        MoonshineCandidates.identity(entry['identity'])
+        entry['style'] == 'legacy' ? check(entry['source_sha'].nil?, 'Legacy delivery cannot invent provenance') :
+          MoonshineCandidates.source_sha(entry['source_sha'])
+      end
+    end
+    data
+  rescue JSON::ParserError
+    raise Failure, 'Invalid release catalog'
+  end
+
+  def accepted_delivery(root, recipe, slot)
+    data = catalog_data(root)
+    return recipe if data['schema'] == 1
+    delivery = data['deliveries'].fetch(slot)
+    check(delivery['identity'] == recipe.identity, 'Accepted delivery recipe identity differs')
+    if delivery['style'] == 'recipe'
+      record = MoonshineCandidates.catalog(root)['history'].find { |item| item['identity'] == recipe.identity }
+      check(record && record['source_sha'] == delivery['source_sha'] && metadata(record['release']) == recipe.release,
+            'Accepted delivery provenance differs from reviewed candidate history')
+      url = "https://github.com/hgaiser/moonshine/releases/download/v#{recipe.release['version']}/#{recipe.release['filename']}"
+      check(recipe.template.include?("  url \"#{url}\"\n"), 'Accepted delivery must pin its upstream URL independently')
+    end
+    Recipe.new(**recipe.to_h, delivery: delivery.transform_values { |value| value&.dup&.freeze }.freeze).freeze
+  end
+
+  def exact_token(recipe)
+    suffix = recipe.delivery&.fetch('style') == 'recipe' ? "-#{recipe.identity}" : ''
+    "moonshine@#{recipe.release['version']}#{suffix}"
   end
 
   def recipe_fields(release, source, scripts, template, approvals: nil)
@@ -217,19 +257,24 @@ module MoonshineReleases
   def current(root)
     root = Pathname(root)
     dir = snapshot_directories(root)[:stable]
-    dir ? load_snapshot(dir, 'Stable') : load_recipe(root/'lib/moonshine_host.rb', root/'reference')
+    dir ? accepted_delivery(root, load_snapshot(dir, 'Stable'), 'stable') : load_recipe(root/'lib/moonshine_host.rb', root/'reference')
   end
 
   def previous(root)
     dir = snapshot_directories(root)[:previous]
-    load_snapshot(dir, 'Previous') if dir
+    if dir
+      recipe = load_snapshot(dir, 'Previous')
+      snapshot_directories(root)[:stable] ? accepted_delivery(root, recipe, 'previous') : recipe
+    end
   end
 
   def recipes(root)
     latest = current(root)
     predecessor = previous(root)
     if predecessor
-      check((version(predecessor.release['version']) <=> version(latest.release['version'])) == -1,
+      order = version(predecessor.release['version']) <=> version(latest.release['version'])
+      check(order == -1 || (order == 0 && latest.delivery&.fetch('style') == 'recipe' && predecessor.identity != latest.identity &&
+                            exact_token(predecessor) != exact_token(latest)),
             'Previous release must precede the current release')
     end
     MoonshineCandidates.catalog(root)
@@ -237,7 +282,7 @@ module MoonshineReleases
   end
 
   def tokens(root)
-    ['moonshine', *recipes(root).map { |recipe| "moonshine@#{recipe.release['version']}" }, *('moonshine@untested' if MoonshineCandidates.catalog(root)['current'])]
+    ['moonshine', *recipes(root).map { |recipe| exact_token(recipe) }, *('moonshine@untested' if MoonshineCandidates.catalog(root)['current'])]
   end
 
   def save_previous(root, recipe)

@@ -122,7 +122,7 @@ class PromotionControllerTest < Minitest::Test
       refute_equal item.identity, moving
       assert_equal 'created', controller.publish(base: BASE, promotion: selection)['status']
       entries = api.writes.first.last.fetch('tree').to_h { |entry| [entry['path'], entry] }
-      assert_includes entries.fetch('Casks/moonshine.rb').fetch('content'), 'version "0.16.2"'
+      assert_includes entries.fetch('Casks/moonshine.rb').fetch('content'), "version \"0.16.2+#{item.identity}\""
       assert_includes entries.fetch('Casks/moonshine@untested.rb').fetch('content'), "version \"0.16.3+#{moving}\""
       assert_equal moving, C.catalog(root)['current']
       refute entries.keys.any? { |path| path.start_with?('releases/candidates/') }
@@ -191,17 +191,22 @@ class PromotionControllerTest < Minitest::Test
     end
   end
 
-  def test_same_version_delivery_stays_disabled_even_for_an_authenticated_bound_report
+  def test_same_version_delivery_requires_checked_provenance_even_for_an_authenticated_bound_report
     native = NativePolicyTest.new('fixture')
     native.fixture do |root, item, evidence|
       origin, api, _replies = native.owner_source(evidence)
       assessed = MoonshinePromotion.assess(root: root, target: item.identity, expected_stable: R.current(root).identity, origin: origin, api: api)
       before = MoonshineCandidate.tree(root)
-      error = assert_raises(R::Failure) do
+      transport = api.method(:call)
+      api.define_singleton_method(:call) do |method, path, *args, **options|
+        raise G::Failure, 'GitHub provenance access refused' if path.include?('/git/') || path.include?('/compare/')
+        transport.call(method, path, *args, **options)
+      end
+      error = assert_raises(G::Failure) do
         MoonshinePromotion.patch(root: root, target: item.identity, expected_stable: R.current(root).identity,
                                 origin: origin, api: api, report_sha256: assessed['report_sha256'])
       end
-      assert_includes error.message, 'explicit delivery policy'
+      assert_includes error.message, 'provenance access refused'
       assert_equal before, MoonshineCandidate.tree(root)
     end
   end
@@ -273,7 +278,7 @@ class PromotionControllerTest < Minitest::Test
       entries = api.writes.first.last.fetch('tree').to_h { |entry| [entry['path'], entry] }
       assert_equal item.source, entries.fetch('releases/stable/helper.rb').fetch('content')
       assert_equal R.current(root).source, entries.fetch('releases/previous/helper.rb').fetch('content')
-      assert_includes entries.fetch('Casks/moonshine@0.16.2.rb').fetch('content'), 'version "0.16.2"'
+      assert_includes entries.fetch("Casks/moonshine@0.16.2-#{item.identity}.rb").fetch('content'), "version \"0.16.2+#{item.identity}\""
       assert_nil entries.fetch('Casks/moonshine@0.16.0.rb')['sha']
       refute entries.keys.any? { |name| name.start_with?('releases/candidates/', 'lib/', 'reference/', 'docs/') }
       assert_equal before, MoonshineCandidate.tree(root)

@@ -166,9 +166,9 @@ module MoonshineCandidates
     check(serialized.bytesize <= MAX_CATALOG, 'Candidate catalog exceeds bound')
     after['releases/candidates/catalog.json'] = serialized
     accepted = MoonshineReleases.recipes(root)
-    tokens = ['moonshine', *accepted.map { |item| "moonshine@#{item.release['version']}" }, 'moonshine@untested']
+    tokens = ['moonshine', *accepted.map { |item| MoonshineReleases.exact_token(item) }, 'moonshine@untested']
     tokens.each do |token|
-      item = token == 'moonshine@untested' ? selected : token == 'moonshine' ? accepted.first : accepted.find { |entry| token == "moonshine@#{entry.release['version']}" }
+      item = token == 'moonshine@untested' ? selected : token == 'moonshine' ? accepted.first : accepted.find { |entry| token == MoonshineReleases.exact_token(entry) }
       after["Casks/#{token}.rb"] = MoonshineCask.render(recipe: item, token: token, tokens: tokens, root: root)
     end
     (before.keys | after.keys).sort.filter_map { |name| [name, after[name]] unless before[name] == after[name] }.to_h

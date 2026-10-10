@@ -53,7 +53,11 @@ A sysext refresh briefly unmerges and remerges shared hierarchies. Other extensi
 
 The tap offers `moonshine`, `moonshine@0.16.1` and `moonshine@0.16.0`. The initial 0.16.0 snapshot contains newly reviewed compatible source. It differs from the current helper only in its exact RPM identity. This review does not establish a historical deployment of that helper.
 
-`moonshine` follows the latest accepted release. Exact-version tokens keep their pinned RPM and independent reviewed helper. The tap offers only the latest and immediate previous accepted releases. Acceptance history determines the predecessor, even if the tap skipped upstream releases.
+`moonshine` follows the latest accepted recipe. Exact tokens keep their pinned RPM and independent reviewed helper. The tap offers only the latest and immediate previous accepted recipes. Acceptance history determines the predecessor, including same-upstream-version fixes and skipped upstream releases.
+
+New moving stable versions use `UPSTREAM_VERSION+FULL_RECIPE_SHA256`. New exact tokens use `moonshine@UPSTREAM_VERSION-FULL_RECIPE_SHA256`. The full hash identifies the installation recipe. The RPM version, URL and checksum remain independently pinned.
+
+Legacy numeric tokens remain fixed until their recipes expire. Promotion never converts an installed numeric receipt into a hash-qualified token. An accepted recipe fix changes the moving stable version for ordinary `brew upgrade`. Switching to another token still requires ordinary uninstall first.
 
 You can install only one Moonshine-family cask. Retained tokens declare conflicts. A guard runs as the normal user to detect installed variants before privileged changes, including expired and foreign Moonshine variants. The guard never silently replaces them.
 

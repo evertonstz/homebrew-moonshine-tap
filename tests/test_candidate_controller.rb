@@ -319,7 +319,7 @@ class CandidateControllerTest < Minitest::Test
         refute projection.keys.any? { |name| name.start_with?('releases/candidates/', 'lib/', 'reference/') }
         assert_equal C.recipe(staged).source, projection['releases/stable/helper.rb']
         assert_equal R.current(staged).source, projection['releases/previous/helper.rb']
-        assert_includes projection['Casks/moonshine.rb'], 'version "0.16.2"'
+        assert_includes projection['Casks/moonshine.rb'], "version \"0.16.2+#{target}\""
         assert_equal before, MoonshineCandidate.tree(staged)
       ensure
         FileUtils.remove_entry_secure(stage['directory'])

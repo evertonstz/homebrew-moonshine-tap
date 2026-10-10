@@ -14,7 +14,7 @@ module MoonshineCask
       fields = MoonshineReleases.recipe_fields(release, source, recipe.scripts, recipe.template, approvals: recipe.approvals)
       MoonshineReleases.check(recipe.identity == MoonshineReleases.recipe_digest(fields), 'Frozen recipe identity differs')
       version = release['version']
-      if token == 'moonshine@untested'
+      if token == 'moonshine@untested' || recipe.delivery&.fetch('style') == 'recipe'
         url = "https://github.com/hgaiser/moonshine/releases/download/v#{version}/#{release['filename']}"
         MoonshineReleases.check(recipe.template.include?("  url \"#{url}\"\n"), 'Untested recipe must pin its upstream URL independently')
         version = "#{version}+#{recipe.identity}"
@@ -95,9 +95,9 @@ module MoonshineCask
   def outputs(root: ROOT)
     recipes = MoonshineReleases.recipes(root)
     candidate = MoonshineCandidates.recipe(root)
-    tokens = ['moonshine', *recipes.map { |recipe| "moonshine@#{recipe.release['version']}" }, *('moonshine@untested' if candidate)]
+    tokens = ['moonshine', *recipes.map { |recipe| MoonshineReleases.exact_token(recipe) }, *('moonshine@untested' if candidate)]
     tokens.to_h do |token|
-      recipe = token == 'moonshine@untested' ? candidate : token == 'moonshine' ? recipes.first : recipes.find { |entry| token == "moonshine@#{entry.release['version']}" }
+      recipe = token == 'moonshine@untested' ? candidate : token == 'moonshine' ? recipes.first : recipes.find { |entry| token == MoonshineReleases.exact_token(entry) }
       ["Casks/#{token}.rb", render(recipe: recipe, token: token, tokens: tokens, root: root)]
     end
   end
