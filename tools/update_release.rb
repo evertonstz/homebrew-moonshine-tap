@@ -21,6 +21,7 @@ module MoonshineUpdateCLI
                                           inspector: MoonshineUpdate::Contract.new(bsdtar: options[:bsdtar]),
                                           store: MoonshineCandidate::Store.new).run(prepare: options[:prepare])
     puts JSON.pretty_generate(result)
+    warn "release review required: #{JSON.generate(result.fetch('reason'))}" if result['status'] == 'review_required'
     result['status'] == 'review_required' ? 1 : 0
   rescue StandardError => e
     warn "release validation failed: #{e.class}: #{e.message}"
