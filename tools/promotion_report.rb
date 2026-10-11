@@ -9,7 +9,8 @@ module MoonshinePromotionReport
       env['GITHUB_REPOSITORY'] == 'evertonstz/homebrew-moonshine-tap' && env['GITHUB_REF'] == 'refs/heads/main' &&
       env['GITHUB_ACTOR'] == 'evertonstz' && env['GITHUB_TRIGGERING_ACTOR'] == 'evertonstz',
       'Promotion requires an owner request on trusted main')
-    MoonshineReleases.check(env['MOONSHINE_APP_TOKEN'].to_s.empty?, 'Package prerequisites must not carry write credentials')
+    MoonshineReleases.check(env['MOONSHINE_APP_TOKEN'].to_s.empty? && env['MOONSHINE_PROTECTION_TOKEN'].to_s.empty?,
+      'Package prerequisites must not carry write or protection credentials')
     MoonshineReleases.check(argv.empty? || (argv.first.is_a?(String) && Pathname(argv.first).absolute? &&
       File.file?(argv.first) && File.executable?(argv.first)), 'Real RPM extraction requires an explicit executable bsdtar')
     target = MoonshineCandidates.identity(env.fetch('MOONSHINE_PROMOTION_TARGET'))

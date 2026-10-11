@@ -24,8 +24,6 @@ class PromotionFlowTest < Minitest::Test
     {'GITHUB_REPOSITORY' => MoonshineGitHub::REPOSITORY, 'GITHUB_REF' => 'refs/heads/main',
      'GITHUB_EVENT_NAME' => 'workflow_dispatch', 'GITHUB_ACTOR' => 'evertonstz', 'GITHUB_TRIGGERING_ACTOR' => 'evertonstz',
      'MOONSHINE_STABLE_PROMOTION_ENABLED' => 'true', 'MOONSHINE_RELEASE_UPDATES_ENABLED' => 'false',
-     'MOONSHINE_APP_SLUG' => 'moonshine-updates', 'MOONSHINE_TOKEN_APP_SLUG' => 'moonshine-updates',
-     'MOONSHINE_BOT_ID' => '12', 'MOONSHINE_CHECK_APP_ID' => '15368',
      'MOONSHINE_BASE_SHA' => fields.fetch('base_sha'), 'MOONSHINE_PROMOTION_TARGET' => fields.fetch('target'),
      'MOONSHINE_EXPECTED_STABLE' => fields.fetch('expected_stable'),
      'MOONSHINE_NATIVE_COMMENT_ID' => fields.fetch('comment_id'),
@@ -200,7 +198,7 @@ class PromotionFlowTest < Minitest::Test
         code, stdout, stderr = invoke(root, api, merge_env, 'merge')
         assert_equal 0, code, stderr
         assert_equal 'merged', JSON.parse(stdout)['status']
-        assert_equal ['PUT', '/pulls/7/merge', {'sha' => PromotionControllerTest::HEAD, 'merge_method' => 'squash'}], api.writes.last
+        assert_equal ['PUT', '/pulls/7/merge', {'sha' => PromotionControllerTest::HEAD, 'merge_method' => 'squash'}], api.writes.find { |method, _, _| method == 'PUT' }
         assert_equal 1, api.writes.count { |method, _path, _value| method == 'PUT' }
         assert_equal before, MoonshineCandidate.tree(root)
       end

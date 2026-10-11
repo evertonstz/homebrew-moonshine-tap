@@ -36,7 +36,7 @@ jobs:
       vars.MOONSHINE_RELEASE_UPDATES_ENABLED == 'true' &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event_name == 'schedule' && vars.MOONSHINE_RELEASE_SCHEDULE_ENABLED == 'true') ||
-       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+       (github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch') &&
         github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-24.04
@@ -95,35 +95,23 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
+      actions: write
     steps:
       - name: Check out the trusted detection base, never candidate artifacts
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.detect.outputs.base_sha }}
           persist-credentials: false
-      - name: Set up Ruby before minting write credentials
+      - name: Set up Ruby for the trusted controller
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: '4.0.6'
-      - name: Mint a short-lived token for this tap only
-        id: app
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
-        with:
-          app-id: ${{ vars.MOONSHINE_APP_ID }}
-          private-key: ${{ secrets.MOONSHINE_APP_PRIVATE_KEY }}
-          owner: evertonstz
-          repositories: homebrew-moonshine-tap
-          permission-contents: write
-          permission-pull-requests: write
-          permission-actions: read
       - name: Reconstruct the permitted patch and publish one bot PR
         env:
-          MOONSHINE_APP_TOKEN: ${{ steps.app.outputs.token }}
-          MOONSHINE_TOKEN_APP_SLUG: ${{ steps.app.outputs.app-slug }}
-          MOONSHINE_APP_SLUG: ${{ vars.MOONSHINE_APP_SLUG }}
-          MOONSHINE_BOT_ID: ${{ vars.MOONSHINE_BOT_ID }}
-          MOONSHINE_CHECK_APP_ID: ${{ vars.MOONSHINE_CHECK_APP_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MOONSHINE_PROTECTION_TOKEN: ${{ secrets.MOONSHINE_PROTECTION_TOKEN }}
           MOONSHINE_RELEASE_UPDATES_ENABLED: ${{ vars.MOONSHINE_RELEASE_UPDATES_ENABLED }}
           MOONSHINE_BASE_SHA: ${{ needs.detect.outputs.base_sha }}
           MOONSHINE_RELEASE: ${{ needs.detect.outputs.release }}

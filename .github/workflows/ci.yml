@@ -23,7 +23,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04]
     env:
-      MOONSHINE_COMPARE_RETAINED: ${{ github.event_name == 'pull_request' && github.head_ref == 'automation/moonshine-release' }}
+      MOONSHINE_COMPARE_RETAINED: ${{ (github.event_name == 'pull_request' && github.head_ref == 'automation/moonshine-release') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/automation/moonshine-release') }}
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

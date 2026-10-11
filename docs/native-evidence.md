@@ -34,7 +34,7 @@ The raw comment body starts with `Moonshine native report v1`, two newline bytes
 
 Calculate the body digest from the JSON response's `body` value. Do not hash the entire API response or a CLI rendering that adds newline bytes. The workflow also requires the exact candidate `target` and `expected_stable` recipe hashes.
 
-The reader uses bounded, certificate-checked HTTPS requests to `api.github.com` without redirects. It uses only `GET` requests. The workflow token has contents-read and pull-requests-read permissions, with no App write token or stored checkout credential.
+The reader uses bounded, certificate-checked HTTPS requests to `api.github.com` without redirects. It uses only `GET` requests. The workflow token has contents-read and pull-requests-read permissions, with no write credential, protection secret or stored checkout credential.
 
 GitHub's repository owner and comment author must both be the selected `evertonstz` user with the same positive integer account ID. The requested comment ID, repository, PR and body digest must match. Missing, deleted, malformed, edited or foreign records refuse. Local cask and expected-recipe checks precede source access.
 
@@ -50,11 +50,11 @@ The patch preserves candidate selection/history, development inputs and unrelate
 
 Same-version promotion requires reviewed-main provenance. A modern target source must strictly follow the accepted source. A legacy seed needs its complete frozen stable snapshot in the target source tree. The target source must be an ancestor of current main. Backwards, unrelated or unprovable replacement refuses. Delivery metadata remains separate from canonical recipe identity and official RPM pins.
 
-The publisher requires scoped App credentials and strict current-base protection. It creates one bot commit, branch and PR without replacing a ref. It rechecks the source before branch and PR creation. Repeated requests reuse the same checked PR. A changed source or baseline refuses. Failed writes do not change local recipes.
+The publisher requires built-in repository-scoped write credentials, a separate read-only protection credential and strict current-base protection. It creates one bot commit, branch and PR without replacing a ref. It rechecks the source before branch and PR creation. Repeated requests reuse the same checked PR. A changed source or baseline refuses. Failed writes do not change local recipes.
 
 Merge requires the exact reconstructed tree, base/head, bot identity, latest actual mandatory CI work and the owner's latest approval of that head. It rechecks approval and live report source before requesting a head-bound protected squash. GitHub enforces head and strict-base checks at merge. Source and review reads are current snapshots, not an atomic transaction across all mutable GitHub records.
 
-The controller defaults to `promotions_enabled:false`. The CLI enables it only when `MOONSHINE_STABLE_PROMOTION_ENABLED` is exactly `true`. Candidate activation cannot enable it. The read-only prerequisite job cannot mint write credentials. The workflow and CLI contracts have synthetic boundary tests. Separately authorized App, protection and operational activation checks remain unfinished. No production candidate or genuine native acceptance report is selected.
+The controller defaults to `promotions_enabled:false`. The CLI enables it only when `MOONSHINE_STABLE_PROMOTION_ENABLED` is exactly `true`. Candidate activation cannot enable it. The read-only prerequisite job cannot mint write credentials. The workflow and CLI contracts have synthetic boundary tests. Separately authorized credential, protection and operational activation checks remain unfinished. No production candidate or genuine native acceptance report is selected.
 
 ## Workflow data exchange
 
@@ -62,11 +62,11 @@ The owner dispatch selects the target, expected stable hash and three comment-or
 
 After package checks, it rechecks the live source, unchanged checkout and current main. It exports only status, base SHA, target, expected stable, comment ID/digest/time and canonical report digest. It exports no package paths, report bodies or executable artifacts. Failed checks produce no positive outputs.
 
-The publisher checks out that bound trusted base. It requires `MOONSHINE_STABLE_PROMOTION_ENABLED=true` independently of candidate activation. Only then can it request a short-lived App token for this repository. That token grants Contents/PR write and Actions/Administration read. Administration read permits protection inspection, not settings changes. The publisher never loads a cask, extracts an RPM or executes a package helper with write credentials.
+The publisher checks out that bound trusted base. It requires `MOONSHINE_STABLE_PROMOTION_ENABLED=true` independently of candidate activation. The trusted write job uses the short-lived built-in repository token with Contents/PR/Actions write. A separate repository-only Administration-read personal token is routed only to the fixed main-protection GET endpoint; it never authenticates writes. No custom App or private key is required. The publisher never loads a cask, extracts an RPM or executes a package helper with write credentials.
 
 The CLI reauthenticates the source and reconstructs the exact patch from trusted inputs. It cannot accept an offline receipt or foreign candidate-publication fields as promotion authority. The merge controller distinguishes candidate and promotion activation and requires current exact-head owner approval. If CI completes before approval, the owner must approve that head and rerun its CI to trigger another protected merge check. A rerun cannot reuse approval for a different head.
 
-Operational activation and authentic native observations remain required independently of the delivery format. This implementation configures no repository variable, App credential or setting.
+Operational activation and authentic native observations remain required independently of the delivery format. This implementation configures no repository variable, stored credential or setting.
 
 ## Recorded host
 

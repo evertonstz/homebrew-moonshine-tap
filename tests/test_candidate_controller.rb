@@ -47,7 +47,7 @@ class CandidateControllerTest < Minitest::Test
           super(method, path, value, missing: missing)
         end
       end
-      controller = G::Controller.new(api: api, root: root, bot_slug: 'moonshine-updates', bot_id: 12, check_app_id: 15368)
+      controller = G::Controller.new(api: api, root: root)
       yield root, api, controller, data
     end
   end
@@ -67,7 +67,7 @@ class CandidateControllerTest < Minitest::Test
       assert_equal 'reused', publish(controller, data)['status']
       assert_equal writes, api.writes
       assert_equal 'merged', controller.merge(base: BASE, run_id: 101)['status']
-      assert_equal({'sha' => HEAD, 'merge_method' => 'squash'}, api.writes.last.last)
+      assert_equal({'sha' => HEAD, 'merge_method' => 'squash'}, api.writes.find { |method, _, _| method == 'PUT' }.last)
       assert_equal before, MoonshineCandidate.tree(root)
     end
   end
@@ -228,7 +228,7 @@ class CandidateControllerTest < Minitest::Test
           super(method, endpoint, value, missing: missing)
         end
       end
-      controller = G::Controller.new(api: api, root: root, bot_slug: 'moonshine-updates', bot_id: 12, check_app_id: 15368)
+      controller = G::Controller.new(api: api, root: root)
       error = assert_raises(G::Failure) { publish(controller, repeated) }
       assert_includes error.message, 'Candidate is already selected; do not publish a loop'
       assert_empty api.writes

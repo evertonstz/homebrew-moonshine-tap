@@ -18,10 +18,14 @@ jobs:
     if: >-
       github.repository == 'evertonstz/homebrew-moonshine-tap' &&
       (vars.MOONSHINE_RELEASE_UPDATES_ENABLED == 'true' || vars.MOONSHINE_STABLE_PROMOTION_ENABLED == 'true') &&
-      github.event.workflow_run.event == 'pull_request' &&
+      (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'workflow_dispatch') &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'automation/moonshine-release' &&
       github.event.workflow_run.head_repository.full_name == 'evertonstz/homebrew-moonshine-tap'
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -30,29 +34,14 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - name: Set up Ruby before minting write credentials
+      - name: Set up Ruby for the trusted controller
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
           ruby-version: '4.0.6'
-      - name: Mint a short-lived token for protected PR merge only
-        id: app
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
-        with:
-          app-id: ${{ vars.MOONSHINE_APP_ID }}
-          private-key: ${{ secrets.MOONSHINE_APP_PRIVATE_KEY }}
-          owner: evertonstz
-          repositories: homebrew-moonshine-tap
-          permission-contents: write
-          permission-pull-requests: write
-          permission-actions: read
-          permission-administration: read
       - name: Check actual CI, exact patch, head and current-base protection
         env:
-          MOONSHINE_APP_TOKEN: ${{ steps.app.outputs.token }}
-          MOONSHINE_TOKEN_APP_SLUG: ${{ steps.app.outputs.app-slug }}
-          MOONSHINE_APP_SLUG: ${{ vars.MOONSHINE_APP_SLUG }}
-          MOONSHINE_BOT_ID: ${{ vars.MOONSHINE_BOT_ID }}
-          MOONSHINE_CHECK_APP_ID: ${{ vars.MOONSHINE_CHECK_APP_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MOONSHINE_PROTECTION_TOKEN: ${{ secrets.MOONSHINE_PROTECTION_TOKEN }}
           MOONSHINE_RELEASE_UPDATES_ENABLED: ${{ vars.MOONSHINE_RELEASE_UPDATES_ENABLED }}
           MOONSHINE_STABLE_PROMOTION_ENABLED: ${{ vars.MOONSHINE_STABLE_PROMOTION_ENABLED }}
           MOONSHINE_CI_RUN_ID: ${{ github.event.workflow_run.id }}

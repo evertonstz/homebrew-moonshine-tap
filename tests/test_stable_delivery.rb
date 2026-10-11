@@ -217,7 +217,8 @@ class StableDeliveryTest < Minitest::Test
         code, stdout, stderr = flow.invoke(root, api, env.merge('GITHUB_EVENT_NAME' => 'workflow_run', 'MOONSHINE_CI_RUN_ID' => '101'), 'merge')
         assert_equal 0, code, stderr
         assert_equal 'merged', JSON.parse(stdout)['status']
-        assert_equal ['PUT', '/pulls/7/merge', {'sha' => 'b' * 40, 'merge_method' => 'squash'}], api.writes.last
+        assert_equal ['PUT', '/pulls/7/merge', {'sha' => 'b' * 40, 'merge_method' => 'squash'}], api.writes.find { |method, _, _| method == 'PUT' }
+        assert_equal ['POST', '/actions/workflows/ci.yml/dispatches', {'ref' => 'main'}], api.writes.last
         assert_equal before, MoonshineCandidate.tree(root)
       end
     end

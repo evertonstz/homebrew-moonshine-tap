@@ -57,7 +57,7 @@ module MoonshineReleases
 
   def load_recipe(helper, references)
     source = read_file(helper, MAX_SOURCE)
-    output, error, status = Open3.capture3({'RUBYOPT' => nil, 'RUBYLIB' => nil, 'GITHUB_TOKEN' => nil, 'MOONSHINE_APP_TOKEN' => nil},
+    output, error, status = Open3.capture3({'RUBYOPT' => nil, 'RUBYLIB' => nil, 'GITHUB_TOKEN' => nil, 'GH_TOKEN' => nil, 'MOONSHINE_APP_TOKEN' => nil, 'MOONSHINE_PROTECTION_TOKEN' => nil},
                                          RbConfig.ruby, '--disable=rubyopt', '-r', File.expand_path(helper), '-e', DESCRIBE)
     check(status.success? && output.bytesize <= MAX_SOURCE, "Cannot describe release helper: #{error.strip}")
     data = JSON.parse(output, max_nesting: 10)

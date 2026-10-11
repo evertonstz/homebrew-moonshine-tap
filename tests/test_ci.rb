@@ -50,6 +50,8 @@ class CIValidationTest < Minitest::Test
     assert_includes text, '--test-rpm-copy'
     assert_includes text, 'tools/run_tests.rb --no-skips'
     assert_includes text, 'automation/moonshine-release'
+    assert_equal "${{ (github.event_name == 'pull_request' && github.head_ref == 'automation/moonshine-release') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/automation/moonshine-release') }}",
+      checks.dig('env', 'MOONSHINE_COMPARE_RETAINED')
     aggregate = jobs.fetch('required')
     assert_equal MoonshineCI::REQUIRED_CHECK, aggregate['name']
     assert_equal MoonshineCI::JOBS, aggregate['needs']
@@ -92,6 +94,7 @@ class CIValidationTest < Minitest::Test
     assert_includes job['if'], "github.event_name == 'workflow_dispatch'"
     assert_includes job['if'], "github.event_name == 'schedule' && vars.MOONSHINE_RELEASE_SCHEDULE_ENABLED == 'true'"
     assert_includes job['if'], "github.event.workflow_run.event == 'push'"
+    assert_includes job['if'], "github.event.workflow_run.event == 'workflow_dispatch'"
     assert_includes job['if'], "github.event.workflow_run.head_repository.full_name == github.repository"
     assert_includes job['if'], "github.ref == 'refs/heads/main'"
     assert_includes job['if'], "github.repository == 'evertonstz/homebrew-moonshine-tap'"
