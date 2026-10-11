@@ -55,7 +55,11 @@ Sysext refresh briefly unmerges shared hierarchies. Other extensions' resources 
 
 ## Versions and recovery
 
-`moonshine` follows the latest accepted release. The tap also offers `moonshine@0.16.1` and `moonshine@0.16.0`. Only the latest and immediate previous accepted releases remain offered, with pinned RPMs and independent reviewed helpers.
+`moonshine` follows the latest accepted recipe. The legacy catalog offers `moonshine@0.16.1` and `moonshine@0.16.0`, with pinned RPMs and independent reviewed helpers.
+
+New protected stable deliveries use `UPSTREAM_VERSION+FULL_RECIPE_SHA256`. Their exact tokens use `moonshine@UPSTREAM_VERSION-FULL_RECIPE_SHA256`. A recipe fix changes the offered stable version even when the upstream RPM version stays the same. Ordinary `brew upgrade` can detect that concrete version change.
+
+Retention keeps the latest and immediate previous accepted recipes, including recipes with the same upstream version. Legacy numeric tokens keep their own recipes until expiry. Promotion does not rename installed receipts or remove cached recovery. Stable activation and native acceptance remain separately required.
 
 Install only one Moonshine-family cask. To switch tokens, approve downtime, back up personal state, ordinarily uninstall the installed token and install the selected one. **Do not use `--zap` for version switching.** An older application may not read newer data and can lack security fixes. Follow the [version-switching procedure](docs/operations.md#exact-versions-and-bounded-rollback).
 

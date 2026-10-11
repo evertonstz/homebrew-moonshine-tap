@@ -46,7 +46,9 @@ This receipt is a snapshot of the current record, not an immutable history of ev
 
 The controller supports an explicit `promote` manifest with trusted base SHA, exact retained target, expected stable identity, raw comment origin and canonical report digest. It authenticates the source again and reconstructs the permitted patch from frozen inputs. It never executes PR code, a generated cask or a package with write credentials.
 
-The patch preserves candidate selection/history, development inputs and unrelated files. Stable receives the exact candidate snapshot. The former stable becomes the accepted predecessor, and generated stable casks retain numeric upstream versions. Same-version or backwards replacement still requires a separate delivery policy and refuses.
+The patch preserves candidate selection/history, development inputs and unrelated files. Stable receives the exact candidate snapshot. The former stable becomes the accepted predecessor. New stable versions use `UPSTREAM_VERSION+FULL_RECIPE_SHA256`, and exact tokens use `moonshine@UPSTREAM_VERSION-FULL_RECIPE_SHA256`. Legacy numeric tokens keep their original recipes until expiry.
+
+Same-version promotion requires reviewed-main provenance. A modern target source must strictly follow the accepted source. A legacy seed needs its complete frozen stable snapshot in the target source tree. The target source must be an ancestor of current main. Backwards, unrelated or unprovable replacement refuses. Delivery metadata remains separate from canonical recipe identity and official RPM pins.
 
 The publisher requires scoped App credentials and strict current-base protection. It creates one bot commit, branch and PR without replacing a ref. It rechecks the source before branch and PR creation. Repeated requests reuse the same checked PR. A changed source or baseline refuses. Failed writes do not change local recipes.
 
@@ -64,7 +66,7 @@ The publisher checks out that bound trusted base. It requires `MOONSHINE_STABLE_
 
 The CLI reauthenticates the source and reconstructs the exact patch from trusted inputs. It cannot accept an offline receipt or foreign candidate-publication fields as promotion authority. The merge controller distinguishes candidate and promotion activation and requires current exact-head owner approval. If CI completes before approval, the owner must approve that head and rerun its CI to trigger another protected merge check. A rerun cannot reuse approval for a different head.
 
-Operational activation, authentic native observations and same-version delivery remain separate gates. No repository variable, App credential or setting is configured by this implementation.
+Operational activation and authentic native observations remain required independently of the delivery format. This implementation configures no repository variable, App credential or setting.
 
 ## Recorded host
 
@@ -104,4 +106,4 @@ Input is at most 32 KiB with nesting limited to ten levels. The validator reject
 
 The output's `report_sha256` binds the canonical parsed report, including host, log and baseline claims. Object-key order and whitespace do not change it. It is distinct from a raw-file or artifact SHA-256. The controller checks the recorded report through the live API. An arbitrary matching summary cannot approve a patch.
 
-Repository tests contain synthetic reports to exercise these rules. They are not native acceptance records. Existing historical Bazzite results do not approve a different recipe hash. Stable promotion remains disabled pending separate operational activation. Same-upstream-version replacement refuses until the owner selects its delivery contract.
+Repository tests contain synthetic reports to exercise these rules. They are not native acceptance records. Existing historical Bazzite results do not approve a different recipe hash. Stable promotion remains disabled pending separate operational activation. Same-upstream-version delivery uses the full-hash model only through the checked protected promotion path.

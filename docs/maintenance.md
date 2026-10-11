@@ -10,6 +10,10 @@ When enabled, the detector checks daily, on manual request, or after successful 
 
 Only the server and WSI binary contents can differ automatically. Packaging changes require review.
 
+New protected stable deliveries use `UPSTREAM_VERSION+FULL_RECIPE_SHA256` and exact tokens `moonshine@UPSTREAM_VERSION-FULL_RECIPE_SHA256`. The accepted catalog keeps current and previous recipes independently, including same-upstream-version fixes. Legacy numeric tokens remain fixed until their recipes expire. Installed receipts and cached recovery are not renamed or removed by catalog expiry.
+
+Accepted-catalog schema 2 records bounded delivery style, recipe identity and modern source SHA for each slot. It checks modern sources against compact candidate history. Same-version promotion also checks strict accepted-source ancestry and current-main ancestry. A legacy seed records no invented source SHA. Its complete frozen stable snapshot must match the target source tree. Delivery metadata does not change canonical recipe bytes or RPM pins.
+
 Read-only CI loads all offered casks with Homebrew. It inspects and extracts retained RPMs and runs regression tests without unexpected skips. Before an automatic merge, the controller also checks actual job and step results. A successful aggregate check alone is insufficient.
 
 ## Publication and protected merging
@@ -56,7 +60,7 @@ App setup, protection changes and activation require separate owner approval.
 
 Stable promotion uses the separate owner-dispatched workflow and [native report contract](native-evidence.md). Its read-only job checks offered casks, retained packages and the bound source before any publisher token. Keep `MOONSHINE_STABLE_PROMOTION_ENABLED` absent or `false` until separately authorized operational checks complete. Candidate activation does not authorize stable publication. Stable-promotion activation does not authorize candidate publication.
 
-A changed base, changed branch or closed update PR requires owner review, fresh detection and validation. The bot never automatically deletes or force-rewrites the branch or PR. Cached recovery is a host operation. It never runs in response to a tap release PR.
+A changed base, changed branch or closed update PR requires owner review, fresh detection and validation. The bot never automatically removes or force-rewrites the branch or PR. Cached recovery is a host operation. It never runs in response to a tap release PR.
 
 ## References
 

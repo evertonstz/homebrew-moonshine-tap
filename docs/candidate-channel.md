@@ -43,12 +43,16 @@ Promotion previews use the selected retained candidate's exact RPM, helper, scri
 
 Positive promotion is disabled. The selected initial policy requires fresh owner-run Bazzite observations for the exact candidate and tested accepted baseline. The [native report contract](native-evidence.md) checks identity, host and required observation claims. Its live source mode authenticates the owner attestation. The protected controller reconstructs a bound patch and requires exact-head owner approval, but defaults to disabled. The workflow separates read-only package prerequisites from its scoped publisher. Both the CLI and publisher require independent stable-promotion activation. Package extraction, hosted CI and PR approval do not establish native lifecycle or streaming acceptance. Existing Bazzite results do not transfer to a different recipe hash.
 
-Replacing stable with a different recipe for the same upstream version also refuses. The numeric stable version would not signal an ordinary Homebrew upgrade. This requires a separate delivery policy before publication.
+New protected stable deliveries use `UPSTREAM_VERSION+FULL_RECIPE_SHA256`. Their exact tokens use `moonshine@UPSTREAM_VERSION-FULL_RECIPE_SHA256`. Same-version recipe fixes therefore change the offered stable version for ordinary Homebrew upgrades. These delivery labels do not change canonical recipe identity or RPM pins.
+
+Same-version promotion checks reviewed-main provenance. Modern successors need strict forward ancestry from the accepted source. Legacy seeds need their complete frozen stable snapshot in the candidate source tree. The target source must remain on current main. Backwards, unrelated or unprovable transitions refuse. Hash order and timestamps do not establish forward ancestry.
+
+The accepted catalog retains current and previous recipes independently, even with the same upstream version. Retained legacy numeric tokens remain frozen until expiry. Expiry does not rename installed receipts or remove cached host recovery. Native-report, owner-approval, package, CI and protection requirements remain unchanged.
 
 OS and SELinux-policy update compatibility remains under observation through normal real updates. Reboot evidence alone is not update evidence.
 
 ## Validation boundary
 
-Hosted CI loads the shipping casks and an isolated generated untested cask on Linux. It checks full Homebrew version strings, official URLs and RPM checksums, then extracts the selected official packages. The isolated check restores its checkout afterward. It does not install Moonshine, change a native host or select a production candidate.
+Hosted CI loads shipping casks and isolated generated untested and stable-delivery fixtures on Linux. It checks full Homebrew version strings, official URLs and RPM checksums, then extracts the selected official packages. The stable fixture uses synthetic delivery metadata and cannot authorize promotion. The isolated check restores its checkout afterward. It reports publication, native acceptance and host installation as false. It does not install Moonshine, change a native host or select a production candidate.
 
 The source scriptlet approvals use SHA-256 after removing trailing newline bytes. The helper checks exact role and `/bin/sh` interpreter arguments. It executes package-extracted scripts only during the authorized installation lifecycle. Cached extracted scripts remain necessary for uninstall and recovery.

@@ -181,7 +181,7 @@ class PromotionFlowTest < Minitest::Test
         assert_equal stable.source, entries.fetch('releases/previous/helper.rb').fetch('content')
         assert_equal item.identity, JSON.parse(entries.fetch('releases/stable/release.json').fetch('content'))['recipe_sha256']
         assert_equal stable.identity, JSON.parse(entries.fetch('releases/previous/release.json').fetch('content'))['recipe_sha256']
-        assert_includes entries.fetch('Casks/moonshine@0.16.2.rb').fetch('content'), 'version "0.16.2"'
+        assert_includes entries.fetch("Casks/moonshine@0.16.2-#{item.identity}.rb").fetch('content'), "version \"0.16.2+#{item.identity}\""
         assert_includes entries.fetch('Casks/moonshine@untested.rb').fetch('content'), "version \"0.16.3+#{moving.identity}\""
         assert_nil entries.fetch('Casks/moonshine@0.16.0.rb')['sha']
         refute entries.keys.any? { |name| name.start_with?('lib/', 'reference/', 'docs/', 'releases/candidates/') }
