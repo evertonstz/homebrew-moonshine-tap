@@ -65,7 +65,7 @@ class PromotionControllerTest < Minitest::Test
           transport.call(method, path, value, missing: missing)
         end
       end
-      controller = G::Controller.new(api: api, root: root, bot_slug: 'moonshine-updates', bot_id: 12, check_app_id: 15368, promotions_enabled: true)
+      controller = G::Controller.new(api: api, root: root, promotions_enabled: true)
       yield root, item, api, controller, selection, replies, reviews
     end
   end
@@ -95,7 +95,7 @@ class PromotionControllerTest < Minitest::Test
       reviews.pop
       before = MoonshineCandidate.tree(root)
       assert_equal 'merged', controller.merge(base: BASE, run_id: 101)['status']
-      assert_equal ['PUT', '/pulls/7/merge', {'sha' => HEAD, 'merge_method' => 'squash'}], api.writes.last
+      assert_equal ['PUT', '/pulls/7/merge', {'sha' => HEAD, 'merge_method' => 'squash'}], api.writes.find { |method, _, _| method == 'PUT' }
       assert_equal before, MoonshineCandidate.tree(root)
     end
   end
@@ -227,7 +227,7 @@ class PromotionControllerTest < Minitest::Test
 
   def test_candidate_activation_alone_cannot_publish_or_merge_stable_promotion
     fixture do |root, _item, api, enabled, selection, replies, reviews|
-      disabled = G::Controller.new(api: api, root: root, bot_slug: 'moonshine-updates', bot_id: 12, check_app_id: 15368)
+      disabled = G::Controller.new(api: api, root: root)
       assert_raises(G::Failure) { disabled.publish(base: BASE, promotion: selection) }
       assert_empty api.writes
       enabled.publish(base: BASE, promotion: selection)
@@ -274,7 +274,8 @@ class PromotionControllerTest < Minitest::Test
       result = controller.publish(base: BASE, promotion: selection)
       assert_equal 'created', result['status']
       assert_equal HEAD, result['head_sha']
-      assert_equal %w[/git/trees /git/commits /git/refs /pulls], api.writes.map { |_, path, _| path }
+      assert_equal %w[/git/trees /git/commits /git/refs /pulls /actions/workflows/ci.yml/dispatches], api.writes.map { |_, path, _| path }
+      assert_equal 303, result['ci_run_id']
       entries = api.writes.first.last.fetch('tree').to_h { |entry| [entry['path'], entry] }
       assert_equal item.source, entries.fetch('releases/stable/helper.rb').fetch('content')
       assert_equal R.current(root).source, entries.fetch('releases/previous/helper.rb').fetch('content')
@@ -284,7 +285,7 @@ class PromotionControllerTest < Minitest::Test
       assert_equal before, MoonshineCandidate.tree(root)
       assert_equal item.identity, C.catalog(root)['current']
       assert_equal selection, G.parse_message(api.commit_message).reject { |key, _| %w[base_sha operation].include?(key) }
-      assert_includes api.writes.last.last.fetch('body'), 'Owner attestation'
+      assert_includes api.writes.find { |_, path, _| path == '/pulls' }.last.fetch('body'), 'Owner attestation'
       writes = api.writes.dup
       assert_equal 'reused', controller.publish(base: BASE, promotion: selection)['status']
       assert_equal writes, api.writes

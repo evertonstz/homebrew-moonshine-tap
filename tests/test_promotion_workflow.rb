@@ -41,6 +41,7 @@ class PromotionWorkflowTest < Minitest::Test
     fixture do |root, _item, api, _controller, selection, replies, _reviews|
       changes = [
         [['/usr/bin/tar'], {'MOONSHINE_APP_TOKEN' => 'private-write-token'}],
+        [['/usr/bin/tar'], {'MOONSHINE_PROTECTION_TOKEN' => 'private-protection-token'}],
         [['/missing-extractor'], {}],
         [['/usr/bin/tar'], {'MOONSHINE_NATIVE_COMMENT_ID' => nil, 'MOONSHINE_NATIVE_COMMENT_SHA256' => nil,
           'MOONSHINE_NATIVE_COMMENT_UPDATED_AT' => nil, 'MOONSHINE_NATIVE_EVIDENCE' => replies.values[1]['body'].delete_prefix(MoonshineNativeOrigin::PREFIX)}]
@@ -84,13 +85,11 @@ class PromotionWorkflowTest < Minitest::Test
     checkout = publish['steps'].find { |step| step['uses'].to_s.start_with?('actions/checkout@') }
     assert_equal '${{ needs.prerequisites.outputs.base_sha }}', checkout.dig('with', 'ref')
     assert_equal false, checkout.dig('with', 'persist-credentials')
-    app = publish['steps'].find { |step| step['uses'].to_s.start_with?('actions/create-github-app-token@') }
-    assert_equal 'evertonstz', app.dig('with', 'owner')
-    assert_equal 'homebrew-moonshine-tap', app.dig('with', 'repositories')
-    assert_equal 'read', app.dig('with', 'permission-administration')
-    assert_equal 'write', app.dig('with', 'permission-contents')
-    assert_equal 'write', app.dig('with', 'permission-pull-requests')
-    assert_equal 'read', app.dig('with', 'permission-actions')
+    refute_includes JSON.generate(publish), 'create-github-app-token'
+    refute_includes JSON.generate(publish), 'MOONSHINE_APP'
+    assert_equal({'contents' => 'write', 'pull-requests' => 'write', 'actions' => 'write'}, publish['permissions'])
+    assert_equal '${{ github.token }}', publish['steps'].last.dig('env', 'GITHUB_TOKEN')
+    assert_equal '${{ secrets.MOONSHINE_PROTECTION_TOKEN }}', publish['steps'].last.dig('env', 'MOONSHINE_PROTECTION_TOKEN')
     step = publish['steps'].find { |item| item['run'] == 'ruby --disable=rubyopt tools/github_release.rb promote' }
     assert step
     assert_equal '${{ needs.prerequisites.outputs.report_sha256 }}', step.dig('env', 'MOONSHINE_NATIVE_REPORT_SHA256')
@@ -109,9 +108,7 @@ class PromotionWorkflowTest < Minitest::Test
 
   def publisher_environment(selection)
     environment(selection).merge('MOONSHINE_STABLE_PROMOTION_ENABLED' => 'true',
-      'MOONSHINE_RELEASE_UPDATES_ENABLED' => 'false', 'MOONSHINE_APP_SLUG' => 'moonshine-updates',
-      'MOONSHINE_TOKEN_APP_SLUG' => 'moonshine-updates', 'MOONSHINE_BOT_ID' => '12',
-      'MOONSHINE_CHECK_APP_ID' => '15368', 'MOONSHINE_BASE_SHA' => PromotionControllerTest::BASE,
+      'MOONSHINE_RELEASE_UPDATES_ENABLED' => 'false', 'MOONSHINE_BASE_SHA' => PromotionControllerTest::BASE,
       'MOONSHINE_NATIVE_REPORT_SHA256' => selection['report_sha256'])
   end
 
@@ -140,7 +137,7 @@ class PromotionWorkflowTest < Minitest::Test
       end
       assert_empty stderr
       assert_equal 'merged', JSON.parse(stdout)['status']
-      assert_equal ['PUT', '/pulls/7/merge', {'sha' => PromotionControllerTest::HEAD, 'merge_method' => 'squash'}], api.writes.last
+      assert_equal ['PUT', '/pulls/7/merge', {'sha' => PromotionControllerTest::HEAD, 'merge_method' => 'squash'}], api.writes.find { |method, _, _| method == 'PUT' }
       assert_equal before, MoonshineCandidate.tree(root)
     end
   end
@@ -155,8 +152,7 @@ class PromotionWorkflowTest < Minitest::Test
       {'MOONSHINE_NATIVE_COMMENT_ID' => '91.0'}, {'MOONSHINE_NATIVE_COMMENT_ID' => '091'},
       {'MOONSHINE_EXPECTED_STABLE' => 'f' * 64}, {'MOONSHINE_PROMOTION_TARGET' => 'f' * 64},
       {'MOONSHINE_NATIVE_COMMENT_SHA256' => 'f' * 64}, {'MOONSHINE_NATIVE_COMMENT_UPDATED_AT' => '2026-01-01T12:00:02Z'},
-      {'MOONSHINE_RELEASE' => '{}'}, {'MOONSHINE_NATIVE_EVIDENCE' => '{}'}, {'MOONSHINE_OPERATION' => 'rollback'},
-      {'MOONSHINE_TOKEN_APP_SLUG' => 'foreign-app'}
+      {'MOONSHINE_RELEASE' => '{}'}, {'MOONSHINE_NATIVE_EVIDENCE' => '{}'}, {'MOONSHINE_OPERATION' => 'rollback'}
     ]
     fixture do |root, _item, api, _controller, selection, _replies, _reviews|
       before = MoonshineCandidate.tree(root)
@@ -187,8 +183,7 @@ class PromotionWorkflowTest < Minitest::Test
     candidate.fixture do |root, api, controller, data|
       candidate.publish(controller, data)
       writes = api.writes.dup
-      stable_only = MoonshineGitHub::Controller.new(api: api, root: root, bot_slug: 'moonshine-updates', bot_id: 12,
-        check_app_id: 15368, promotions_enabled: true, candidates_enabled: false)
+      stable_only = MoonshineGitHub::Controller.new(api: api, root: root, promotions_enabled: true, candidates_enabled: false)
       assert_raises(MoonshineGitHub::Failure) { stable_only.merge(base: GitHubReleaseTest::BASE, run_id: 101) }
       assert_equal writes, api.writes
     end

@@ -24,11 +24,9 @@ module MoonshineGitHubCLI
     else
       MoonshineGitHub.check(env['GITHUB_EVENT_NAME'] == 'workflow_run', 'Merge requires CI completion metadata')
     end
-    MoonshineGitHub.check(env['MOONSHINE_TOKEN_APP_SLUG'] == env.fetch('MOONSHINE_APP_SLUG'), 'Token App does not match configured identity')
-    api ||= MoonshineGitHub::API.new(token: env.fetch('MOONSHINE_APP_TOKEN'))
+    api ||= MoonshineGitHub::API.new(token: env.fetch('GITHUB_TOKEN'),
+      protection_token: env.fetch('MOONSHINE_PROTECTION_TOKEN'))
     controller = MoonshineGitHub::Controller.new(api: api, root: root,
-      bot_slug: env.fetch('MOONSHINE_APP_SLUG'), bot_id: Integer(env.fetch('MOONSHINE_BOT_ID'), 10),
-      check_app_id: Integer(env.fetch('MOONSHINE_CHECK_APP_ID'), 10),
       promotions_enabled: promotion_enabled, candidates_enabled: candidate_enabled)
     base, _, status = runner.call('git', '-C', root.to_s, 'rev-parse', 'HEAD')
     MoonshineGitHub.check(status.success?, 'Cannot identify trusted checkout')
@@ -57,6 +55,10 @@ module MoonshineGitHubCLI
       controller.merge(base: base, run_id: Integer(env.fetch('MOONSHINE_CI_RUN_ID'), 10))
     end
     puts JSON.generate(result)
+    if result['main_ci_dispatch'] == 'failed'
+      warn 'Merge completed; main CI dispatch failed. Do not retry the merge; owner review required.'
+      return 1
+    end
     0
   rescue MoonshineGitHub::Failure => e
     warn "Release controller refused: #{e.message}"

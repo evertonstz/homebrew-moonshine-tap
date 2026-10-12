@@ -2,7 +2,7 @@
 
 This channel is opt-in. The official RPM can be a stable upstream release while its Homebrew integration recipe is untested.
 
-No untested cask is selected in the initial catalog. Automation remains disabled until the owner configures the App, required checks and protected merge behavior. The initial native-report policy is selected, but stable promotion remains disabled pending separate operational activation.
+No untested cask is selected in the initial catalog. Automation remains disabled until the owner configures the read-only protection credential, built-in bot PR permissions, required checks and protected merge behavior. The initial native-report policy is selected, but stable promotion remains disabled pending separate operational activation.
 
 ## Candidate identity
 

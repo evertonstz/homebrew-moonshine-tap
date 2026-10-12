@@ -13,6 +13,8 @@ module MoonshineGitHub
   PREFIX = "Moonshine release update\n\n".freeze
   MAX_JSON = 2 * 1024 * 1024
   JOB_NAMES = ['Moonshine checks (ubuntu-24.04)', MoonshineCI::REQUIRED_CHECK].freeze
+  BOT = {'login' => 'github-actions[bot]'.freeze, 'id' => 41898282, 'type' => 'Bot'.freeze}.freeze
+  CHECK_PROVIDER_ID = 15368
   Failure = Class.new(StandardError)
 
   def check(value, message)
@@ -84,9 +86,9 @@ module MoonshineGitHub
 
   # Use one HTTPS origin without redirects, response logging or token storage on disk.
   class API
-    def initialize(token:, transport: nil)
+    def initialize(token:, protection_token: nil, transport: nil)
       MoonshineGitHub.check(token.is_a?(String) && token.match?(/\A[A-Za-z0-9_.-]{20,512}\z/), 'Missing or malformed GitHub credential')
-      @token = token
+      @token, @protection_token = token, protection_token
       @transport = transport || method(:send_request)
     end
 
@@ -98,7 +100,7 @@ module MoonshineGitHub
       prefix = "/repos/#{REPOSITORY}"
       allowed = case method
       when 'GET' then path == '/installation/repositories?per_page=100' || path.start_with?(prefix + '/') || path == prefix
-      when 'POST' then %w[/git/trees /git/commits /git/refs /pulls].include?(path.delete_prefix(prefix)) && path.start_with?(prefix + '/')
+      when 'POST' then %w[/git/trees /git/commits /git/refs /pulls /actions/workflows/ci.yml/dispatches].include?(path.delete_prefix(prefix)) && path.start_with?(prefix + '/')
       when 'PUT' then path.match?(%r{\A#{Regexp.escape(prefix)}/pulls/[1-9][0-9]*/merge\z})
       else false
       end
@@ -107,7 +109,17 @@ module MoonshineGitHub
         MoonshineGitHub.check(data.is_a?(Hash) && data.keys.sort == %w[ref sha] && data['ref'] == "refs/heads/#{BRANCH}", 'Only the bot branch may be created')
         MoonshineGitHub.sha(data['sha'])
       end
-      code, body = @transport.call(method, path, data, @token)
+      if method == 'POST' && path == prefix + '/actions/workflows/ci.yml/dispatches'
+        MoonshineGitHub.check(data.is_a?(Hash) && data.keys == ['ref'] && [BRANCH, 'main'].include?(data['ref']),
+                             'Only actual CI on the bot branch or main may be dispatched')
+      end
+      token = @token
+      if method == 'GET' && path == prefix + '/branches/main/protection'
+        MoonshineGitHub.check(@protection_token.is_a?(String) && @protection_token.match?(/\A[A-Za-z0-9_.-]{20,512}\z/),
+                             'Missing or malformed read-only protection credential')
+        token = @protection_token
+      end
+      code, body = @transport.call(method, path, data, token)
       return nil if missing && method == 'GET' && code == 404
       MoonshineGitHub.check(code.between?(200, 299), "GitHub request refused (HTTP #{code})")
       MoonshineGitHub.check(body.is_a?(String) && body.bytesize <= MAX_JSON, 'GitHub response exceeds limit')
@@ -121,7 +133,7 @@ module MoonshineGitHub
       request = {'GET' => Net::HTTP::Get, 'POST' => Net::HTTP::Post, 'PUT' => Net::HTTP::Put}.fetch(method).new(uri)
       request['Authorization'] = "Bearer #{token}"
       request['Accept'] = 'application/vnd.github+json'
-      request['X-GitHub-Api-Version'] = '2022-11-28'
+      request['X-GitHub-Api-Version'] = '2026-03-10'
       request['User-Agent'] = 'moonshine-tap-release-controller'
       request['Content-Type'] = 'application/json'
       request.body = JSON.generate(data) if data
@@ -150,12 +162,10 @@ module MoonshineGitHub
   end
 
   class Controller
-    def initialize(api:, root:, bot_slug:, bot_id:, check_app_id:, promotions_enabled: false, candidates_enabled: true)
-      MoonshineGitHub.check(bot_slug.is_a?(String) && bot_slug.match?(/\A[a-z0-9][a-z0-9-]{0,62}\z/), 'Missing expected App slug')
+    def initialize(api:, root:, promotions_enabled: false, candidates_enabled: true)
       @api, @root = api, Pathname(root)
-      @bot = "#{bot_slug}[bot]"
-      @bot_id = MoonshineGitHub.integer(bot_id)
-      @check_app_id = MoonshineGitHub.integer(check_app_id)
+      @bot, @bot_id = BOT.values_at('login', 'id')
+      @check_app_id = CHECK_PROVIDER_ID
       @prefix = "/repos/#{REPOSITORY}"
       @promotions_enabled = promotions_enabled == true
       @candidates_enabled = candidates_enabled == true
@@ -169,6 +179,17 @@ module MoonshineGitHub
       @api.call('POST', @prefix + suffix, body)
     end
 
+    def dispatch_ci!(ref, head)
+      MoonshineGitHub.check([BRANCH, 'main'].include?(ref), 'CI dispatch ref differs')
+      head = MoonshineGitHub.sha(head)
+      MoonshineGitHub.check(get("/git/ref/heads/#{ref}").dig('object', 'sha') == head, 'CI dispatch head changed')
+      result = post('/actions/workflows/ci.yml/dispatches', {'ref' => ref})
+      MoonshineGitHub.check(result.is_a?(Hash), 'Invalid CI dispatch receipt')
+      id = MoonshineGitHub.integer(result['workflow_run_id'])
+      MoonshineGitHub.check(get("/git/ref/heads/#{ref}").dig('object', 'sha') == head, 'CI dispatch head changed')
+      id
+    end
+
     def bot?(user)
       user.is_a?(Hash) && user['type'] == 'Bot' && user['login'] == @bot && user['id'] == @bot_id
     end
@@ -176,7 +197,7 @@ module MoonshineGitHub
     def scope!
       scope = @api.call('GET', '/installation/repositories?per_page=100')
       MoonshineGitHub.check(scope['total_count'] == 1 && scope['repositories'].is_a?(Array) &&
-        scope['repositories'].map { |repo| repo['full_name'] } == [REPOSITORY], 'App credential must be scoped to this repository only')
+        scope['repositories'].map { |repo| repo['full_name'] } == [REPOSITORY], 'Built-in credential must be scoped to this repository only')
       repo = get('')
       MoonshineGitHub.check(repo['full_name'] == REPOSITORY && repo['default_branch'] == 'main' &&
         repo['allow_squash_merge'] == true && repo['allow_auto_merge'] == true && repo['delete_branch_on_merge'] == true &&
@@ -261,7 +282,7 @@ module MoonshineGitHub
       MoonshineGitHub.check(object['parents'].is_a?(Array) && object['parents'].map { |parent| parent['sha'] } == [data['base_sha']] &&
         object['message'] == MoonshineGitHub.message(data) && files == expected_files, 'Unexpected bot branch commit or release patch')
       commit = get("/commits/#{MoonshineGitHub.sha(head)}")
-      MoonshineGitHub.check(bot?(commit['author']) && bot?(commit['committer']), 'Release commit is not owned by the configured App bot')
+      MoonshineGitHub.check(bot?(commit['author']) && bot?(commit['committer']), 'Release commit is not owned by the GitHub Actions bot')
     end
 
     def pull!(pr, base, head)
@@ -287,8 +308,9 @@ module MoonshineGitHub
     end
 
     def validation!(run, head, number = nil)
-      event, branch = number ? ['pull_request', BRANCH] : ['push', 'main']
-      MoonshineGitHub.check(run.is_a?(Hash) && run['event'] == event && run['status'] == 'completed' &&
+      events, branch = number ? [%w[pull_request workflow_dispatch], BRANCH] : [%w[push workflow_dispatch], 'main']
+      event = run.is_a?(Hash) ? run['event'] : nil
+      MoonshineGitHub.check(run.is_a?(Hash) && events.include?(event) && run['status'] == 'completed' &&
         run['conclusion'] == 'success' && run['path'] == '.github/workflows/ci.yml' && run['head_sha'] == head &&
         run['head_branch'] == branch && run.dig('repository', 'full_name') == REPOSITORY &&
         run.dig('head_repository', 'full_name') == REPOSITORY, 'CI identity, conclusion or checked head differs')
@@ -314,8 +336,21 @@ module MoonshineGitHub
           matches.length == 1 && matches.first['status'] == 'completed' && matches.first['conclusion'] == 'success'
         end, 'Required CI steps missing, skipped or unsuccessful')
       end
-      # Require CI association with this PR as well as its exact head.
-      MoonshineGitHub.check(run['pull_requests'].is_a?(Array) && run['pull_requests'].map { |pr| pr['number'] } == (number ? [number] : []), 'CI is not associated with the expected PR')
+      # Dispatch metadata can omit PRs. Independently bind its tested commit to the exact owned PR.
+      if number && event == 'workflow_dispatch'
+        associated = get("/commits/#{head}/pulls?per_page=100")
+        MoonshineGitHub.check(associated.is_a?(Array) && associated.length < 100 && associated.all? { |pr| pr.is_a?(Hash) } &&
+          associated.map { |pr| pr['number'] } == [number] && associated.all? do |pr|
+            bot?(pr['user']) && pr.dig('head', 'sha') == head && pr.dig('head', 'ref') == BRANCH &&
+              pr.dig('head', 'repo', 'full_name') == REPOSITORY && pr.dig('base', 'repo', 'full_name') == REPOSITORY &&
+              pr.dig('base', 'ref') == 'main'
+          end, 'Dispatched CI is not associated with the exact owned PR')
+        MoonshineGitHub.check(run['pull_requests'].is_a?(Array) &&
+          [[], [number]].include?(run['pull_requests'].map { |pr| pr['number'] }), 'Dispatched CI has foreign PR associations')
+      else
+        MoonshineGitHub.check(run['pull_requests'].is_a?(Array) &&
+          run['pull_requests'].map { |pr| pr['number'] } == (number ? [number] : []), 'CI is not associated with the expected PR')
+      end
     end
 
     def checked_main!(base, run_id)
@@ -367,7 +402,14 @@ module MoonshineGitHub
       promotion_current!(data, after)
       result = @api.call('PUT', @prefix + "/pulls/#{number}/merge", {'sha' => head, 'merge_method' => 'squash'})
       MoonshineGitHub.check(result['merged'] == true, 'Protected merge was refused; accepted pins unchanged')
-      {'status' => 'merged', 'number' => number, 'head_sha' => head, 'merge_sha' => MoonshineGitHub.sha(result['sha'])}
+      merged = {'status' => 'merged', 'number' => number, 'head_sha' => head, 'merge_sha' => MoonshineGitHub.sha(result['sha'])}
+      begin
+        merged['main_ci_run_id'] = dispatch_ci!('main', merged['merge_sha'])
+      rescue MoonshineGitHub::Failure
+        # Merge already happened. Report this partial outcome; never retry or claim unchanged pins.
+        merged['main_ci_dispatch'] = 'failed'
+      end
+      merged
     end
 
     def publish(base:, release: nil, asset: nil, recipe: nil, expected_current: nil, operation: 'forward', reason: nil, promotion: nil)
@@ -437,7 +479,7 @@ module MoonshineGitHub
       # The create response may not contain a computed commit count yet.
       pr = get("/pulls/#{MoonshineGitHub.integer(pr['number'])}")
       pull!(pr, base, head)
-      {'status' => 'created', 'number' => pr['number'], 'head_sha' => head}
+      {'status' => 'created', 'number' => pr['number'], 'head_sha' => head, 'ci_run_id' => dispatch_ci!(BRANCH, head)}
     end
   end
 end

@@ -33,7 +33,7 @@ module MoonshineCandidateSelection
       client.download(MoonshineUpdate.download_url(recipe.release), path)
       MoonshineUpdate.check(Digest::SHA256.file(path).hexdigest == recipe.release['sha256'] && path.size == asset['size'] &&
                             (!asset['digest'] || asset['digest'] == "sha256:#{recipe.release['sha256']}"), 'Retained official asset identity changed')
-      output, error, result = Open3.capture3({'RUBYOPT' => nil, 'RUBYLIB' => nil, 'GITHUB_TOKEN' => nil, 'MOONSHINE_APP_TOKEN' => nil},
+      output, error, result = Open3.capture3({'RUBYOPT' => nil, 'RUBYLIB' => nil, 'GITHUB_TOKEN' => nil, 'GH_TOKEN' => nil, 'MOONSHINE_APP_TOKEN' => nil, 'MOONSHINE_PROTECTION_TOKEN' => nil},
         RbConfig.ruby, '--disable=rubyopt', '-r', recipe.helper_path.to_s, '-r', (root/'lib/release_update.rb').to_s,
         '-e', MoonshineReleaseCheck::INSPECT, path.to_s, argv.first, JSON.generate(recipe.release))
       MoonshineUpdate.check(result.success?, "Retained recipe package inspection refused: #{error.strip}")

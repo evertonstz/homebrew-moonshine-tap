@@ -27,7 +27,7 @@ class UpdateCLITest < Minitest::Test
       extractor = ENV.fetch('MOONSHINE_TEST_BSDTAR', '/usr/bin/bsdtar')
       output, error, status = Open3.capture3(
         {'RUBYOPT' => nil, 'RUBYLIB' => nil, 'GITHUB_TOKEN' => nil, 'GH_TOKEN' => nil,
-         'MOONSHINE_APP_TOKEN' => nil},
+         'MOONSHINE_APP_TOKEN' => nil, 'MOONSHINE_PROTECTION_TOKEN' => nil},
         RbConfig.ruby, '--disable=rubyopt', (root / 'tools/update_release.rb').to_s,
         '--bsdtar', extractor, '--prepare', chdir: root.to_s
       )

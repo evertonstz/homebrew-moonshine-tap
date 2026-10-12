@@ -1,19 +1,20 @@
 require 'minitest/autorun'
 require 'yaml'
 require_relative '../lib/github_release'
+require_relative '../tools/github_release'
 
 class GitHubReleaseTest < Minitest::Test
   ROOT = Pathname(__dir__).parent
   BASE = 'a' * 40
   HEAD = 'b' * 40
   TREE = 'c' * 40
-  BOT = {'login' => 'moonshine-updates[bot]', 'id' => 12, 'type' => 'Bot'}.freeze
+  BOT = {'login' => 'github-actions[bot]', 'id' => 41898282, 'type' => 'Bot'}.freeze
   RELEASE = {'version' => '0.16.2', 'sha256' => 'd' * 64, 'filename' => 'moonshine-0.16.2-1.x86_64.rpm'}.freeze
 
   class FakeAPI
     attr_reader :writes, :reads
     attr_accessor :base, :branch, :pulls, :head_files, :parents, :commit_message, :owner, :scope, :settings, :fail_write,
-                  :protection, :run, :jobs, :latest, :before_merge, :extra_directory
+                  :protection, :run, :jobs, :latest, :before_merge, :extra_directory, :associated_pulls, :dispatch_reply
     def initialize(files, after, data)
       @files, @head_files, @data = files, after, data
       @base, @branch, @parents, @commit_message = BASE, nil, [BASE], MoonshineGitHub.message(data)
@@ -61,6 +62,7 @@ class GitHubReleaseTest < Minitest::Test
         when "/git/trees/#{TREE}?recursive=1" then tree(@files)
         when "/git/trees/#{'e' * 40}?recursive=1" then tree(@head_files)
         when "/commits/#{HEAD}" then {'author' => @owner, 'committer' => @owner}
+        when "/commits/#{HEAD}/pulls?per_page=100" then @associated_pulls || @pulls
         when '/pulls/7' then @pulls.first
         when '/branches/main/protection' then @protection
         when '/actions/runs/101' then @run
@@ -78,10 +80,12 @@ class GitHubReleaseTest < Minitest::Test
         when '/git/commits' then {'sha' => HEAD}
         when '/git/refs' then @branch = data['sha']; {'object' => {'sha' => @branch}}
         when '/pulls' then @pulls = [pr]; @pulls.first
+        when '/actions/workflows/ci.yml/dispatches' then @dispatch_reply || {'workflow_run_id' => 303}
         when '/pulls/7/merge'
           @before_merge&.call(self)
           raise MoonshineGitHub::Failure, 'Head moved at the server' unless data['sha'] == @branch
           raise MoonshineGitHub::Failure, 'Strict current-base protection refused' unless @base == BASE
+          @base = 'f' * 40
           {'merged' => true, 'sha' => 'f' * 40}
         else raise "Unexpected fixture write: #{suffix}"
         end
@@ -98,6 +102,146 @@ class GitHubReleaseTest < Minitest::Test
       entries += directories.map { |path| {'path' => path, 'mode' => '040000', 'type' => 'tree', 'sha' => 'f' * 40} }
       {'truncated' => false, 'tree' => entries}
     end
+  end
+
+  def test_dispatch_api_uses_builtin_token_and_rejects_foreign_refs_and_inputs_before_transport
+    calls = []
+    token = 'BUILTIN_' + 'x' * 30
+    reader = 'READER_' + 'y' * 30
+    transport = ->(*arguments) { calls << arguments; [200, JSON.generate('workflow_run_id' => 303)] }
+    api = MoonshineGitHub::API.new(token: token, protection_token: reader, transport: transport)
+    path = '/repos/evertonstz/homebrew-moonshine-tap/actions/workflows/ci.yml/dispatches'
+    assert_equal 303, api.call('POST', path, {'ref' => MoonshineGitHub::BRANCH})['workflow_run_id']
+    assert_equal token, calls.last.last
+    before = calls.dup
+    [{'ref' => 'feature'}, {'ref' => 'main', 'inputs' => {'command' => 'arbitrary'}},
+     {'ref' => MoonshineGitHub::BRANCH, 'return_run_details' => true}].each do |body|
+      assert_raises(MoonshineGitHub::Failure) { api.call('POST', path, body) }
+      assert_equal before, calls
+    end
+  end
+
+  def test_malformed_post_merge_dispatch_receipt_preserves_the_merged_outcome
+    api, _ = merge_fixture
+    api.dispatch_reply = []
+    env = {'GITHUB_REPOSITORY' => MoonshineGitHub::REPOSITORY, 'GITHUB_EVENT_NAME' => 'workflow_run',
+      'MOONSHINE_RELEASE_UPDATES_ENABLED' => 'true', 'MOONSHINE_CI_RUN_ID' => '101'}
+    runner = ->(*) { [BASE + "\n", '', Struct.new(:success?).new(true)] }
+    output, error = capture_io do
+      assert_equal 1, MoonshineGitHubCLI.main(['merge'], env, api: api,
+        root: Pathname(@legacy_fixtures.last), runner: runner)
+    end
+    refute_empty output, 'A malformed CI receipt must not conceal the completed merge'
+    assert_equal 'merged', JSON.parse(output)['status']
+    assert_includes error, 'Merge completed; main CI dispatch failed'
+  end
+
+  def test_cli_reports_merge_already_completed_when_main_dispatch_fails
+    api, _ = merge_fixture
+    api.fail_write = '/actions/workflows/ci.yml/dispatches'
+    env = {'GITHUB_REPOSITORY' => MoonshineGitHub::REPOSITORY, 'GITHUB_EVENT_NAME' => 'workflow_run',
+      'MOONSHINE_RELEASE_UPDATES_ENABLED' => 'true', 'MOONSHINE_CI_RUN_ID' => '101'}
+    runner = ->(*) { [BASE + "\n", '', Struct.new(:success?).new(true)] }
+    code = nil
+    output, error = capture_io do
+      code = MoonshineGitHubCLI.main(['merge'], env, api: api, root: Pathname(@legacy_fixtures.last), runner: runner)
+    end
+    assert_equal 1, code, 'The workflow must expose the incomplete post-merge CI handoff'
+    assert_equal 'merged', JSON.parse(output)['status']
+    assert_equal 'failed', JSON.parse(output)['main_ci_dispatch']
+    assert_includes error, 'Merge completed; main CI dispatch failed'
+    assert_equal 1, api.writes.count { |method, _, _| method == 'PUT' }
+    assert_equal 'f' * 40, api.base
+  end
+
+  def test_dispatched_ci_requires_exact_pr_membership_and_merges_then_dispatches_main
+    api, controller = merge_fixture
+    api.run['event'] = 'workflow_dispatch'
+    api.run['pull_requests'] = []
+    result = nil
+    begin
+      result = controller.merge(base: BASE, run_id: 101)
+    rescue MoonshineGitHub::Failure => error
+      flunk "Actual exact-head dispatched CI must support protected merge: #{error.message}"
+    end
+    assert_equal 'merged', result['status']
+    assert_equal 303, result['main_ci_run_id']
+    assert_equal ['POST', '/actions/workflows/ci.yml/dispatches', {'ref' => 'main'}], api.writes.last
+    assert_includes api.reads, "/commits/#{HEAD}/pulls?per_page=100"
+    %i[missing foreign].each do |fault|
+      api, controller = merge_fixture
+      api.run['event'] = 'workflow_dispatch'
+      api.run['pull_requests'] = []
+      api.associated_pulls = fault == :missing ? [] : [api.pr.merge('number' => 99)]
+      assert_raises(MoonshineGitHub::Failure) { controller.merge(base: BASE, run_id: 101) }
+      assert_empty api.writes
+    end
+  end
+
+  def test_created_builtin_bot_pr_explicitly_dispatches_actual_read_only_ci
+    api, controller = fixture
+    result = publish(controller)
+    assert_includes api.writes.map { |_, path, _| path }, '/actions/workflows/ci.yml/dispatches'
+    assert_equal ['POST', '/actions/workflows/ci.yml/dispatches', {'ref' => 'automation/moonshine-release'}], api.writes.last
+    assert_equal 303, result['ci_run_id']
+    before = api.writes.dup
+    assert_equal 'reused', publish(controller)['status']
+    assert_equal before, api.writes
+  end
+
+  def test_public_cli_publishes_with_builtin_and_read_only_tokens_without_app_variables
+    api, _ = fixture
+    root = Pathname(@legacy_fixtures.last)
+    env = {'GITHUB_REPOSITORY' => 'evertonstz/homebrew-moonshine-tap', 'GITHUB_REF' => 'refs/heads/main',
+      'GITHUB_EVENT_NAME' => 'workflow_dispatch', 'MOONSHINE_RELEASE_UPDATES_ENABLED' => 'true',
+      'GITHUB_TOKEN' => 'BUILTIN_' + 'x' * 30, 'MOONSHINE_PROTECTION_TOKEN' => 'READ_ONLY_' + 'y' * 30,
+      'MOONSHINE_BASE_SHA' => BASE, 'MOONSHINE_RELEASE' => JSON.generate(RELEASE), 'MOONSHINE_ASSET_ID' => '123'}
+    runner = ->(*args) { [BASE + "\n", '', Struct.new(:success?).new(true)] }
+    code = nil
+    output, error = capture_io { code = MoonshineGitHubCLI.main(['publish'], env, api: api, root: root, runner: runner) }
+    assert_equal 0, code, error
+    assert_equal 'created', JSON.parse(output)['status']
+    assert_empty error
+    assert_equal 'github-actions[bot]', api.pulls.first.dig('user', 'login')
+    refute_includes output, env['GITHUB_TOKEN']
+    refute_includes output, env['MOONSHINE_PROTECTION_TOKEN']
+  end
+
+  def test_builtin_bot_can_publish_without_any_configured_app_identity
+    api, _ = fixture
+    api.owner = {'login' => 'github-actions[bot]', 'id' => 41898282, 'type' => 'Bot'}
+    begin
+      controller = MoonshineGitHub::Controller.new(api: api, root: Pathname(@legacy_fixtures.last))
+    rescue ArgumentError
+      flunk 'Publication must not require a custom App identity'
+    end
+    assert_equal 'created', publish(controller)['status']
+    assert_equal 'github-actions[bot]', api.pulls.first.dig('user', 'login')
+  end
+
+  def test_read_only_protection_credential_is_used_only_for_its_fixed_get_path
+    seen = []
+    write_token = 'BUILTIN_TOKEN_' + 'x' * 30
+    read_token = 'PROTECTION_READ_' + 'y' * 30
+    transport = ->(method, path, body, token) { seen << [method, path, body, token]; [200, '{}'] }
+    begin
+      api = MoonshineGitHub::API.new(token: write_token, protection_token: read_token, transport: transport)
+    rescue ArgumentError
+      flunk 'The public API must support a separate read-only protection credential'
+    end
+    prefix = '/repos/evertonstz/homebrew-moonshine-tap'
+    api.call('GET', prefix)
+    api.call('GET', prefix + '/branches/main/protection')
+    api.call('POST', prefix + '/git/trees', {'base_tree' => TREE, 'tree' => []})
+    assert_equal [write_token, read_token, write_token], seen.map(&:last)
+    assert_raises(MoonshineGitHub::Failure) { api.call('POST', prefix + '/branches/main/protection', {}) }
+    assert_raises(MoonshineGitHub::Failure) { api.call('GET', '/repos/another/repo/branches/main/protection') }
+    assert_equal 3, seen.length
+    refute_includes api.inspect, write_token
+    refute_includes api.inspect, read_token
+    no_reader = MoonshineGitHub::API.new(token: write_token, transport: transport)
+    assert_raises(MoonshineGitHub::Failure) { no_reader.call('GET', prefix + '/branches/main/protection') }
+    assert_equal 3, seen.length
   end
 
   def teardown
@@ -133,7 +277,7 @@ class GitHubReleaseTest < Minitest::Test
     end
     data = MoonshineGitHub.manifest(BASE, RELEASE, 123)
     api = FakeAPI.new(before, after, data)
-    [api, MoonshineGitHub::Controller.new(api: api, root: root, bot_slug: 'moonshine-updates', bot_id: 12, check_app_id: 15368)]
+    [api, MoonshineGitHub::Controller.new(api: api, root: root)]
   end
 
   def publish(controller)
@@ -143,13 +287,13 @@ class GitHubReleaseTest < Minitest::Test
   def test_publication_creates_one_commit_one_branch_one_pr_and_repeated_runs_do_no_writes
     api, controller = fixture
     baseline = MoonshineCandidate.tree(ROOT)
-    assert_equal({'status' => 'created', 'number' => 7, 'head_sha' => HEAD}, publish(controller))
-    assert_equal %w[/git/trees /git/commits /git/refs /pulls], api.writes.map { |_, path, _| path }
+    assert_equal({'status' => 'created', 'number' => 7, 'head_sha' => HEAD, 'ci_run_id' => 303}, publish(controller))
+    assert_equal %w[/git/trees /git/commits /git/refs /pulls /actions/workflows/ci.yml/dispatches], api.writes.map { |_, path, _| path }
     assert_equal [BASE], api.writes[1].last['parents']
     assert_equal "refs/heads/#{MoonshineGitHub::BRANCH}", api.writes[2].last['ref']
-    assert_includes api.writes.last.last['body'], MoonshineHost::RELEASE['sha256']
-    assert_includes api.writes.last.last['body'], RELEASE['sha256']
-    assert_includes api.writes.last.last['body'], 'No new host installation'
+    assert_includes api.writes[-2].last['body'], MoonshineHost::RELEASE['sha256']
+    assert_includes api.writes[-2].last['body'], RELEASE['sha256']
+    assert_includes api.writes[-2].last['body'], 'No new host installation'
     writes = api.writes.dup
     assert_equal 'reused', publish(controller)['status']
     assert_equal writes, api.writes
@@ -240,8 +384,9 @@ class GitHubReleaseTest < Minitest::Test
 
   def test_merge_requires_actual_jobs_and_steps_then_requests_protected_squash_for_exact_head
     api, controller = merge_fixture
-    assert_equal({'status' => 'merged', 'number' => 7, 'head_sha' => HEAD, 'merge_sha' => 'f' * 40}, controller.merge(base: BASE, run_id: 101))
-    assert_equal [['PUT', '/pulls/7/merge', {'sha' => HEAD, 'merge_method' => 'squash'}]], api.writes
+    assert_equal({'status' => 'merged', 'number' => 7, 'head_sha' => HEAD, 'merge_sha' => 'f' * 40, 'main_ci_run_id' => 303}, controller.merge(base: BASE, run_id: 101))
+    assert_equal [['PUT', '/pulls/7/merge', {'sha' => HEAD, 'merge_method' => 'squash'}],
+                  ['POST', '/actions/workflows/ci.yml/dispatches', {'ref' => 'main'}]], api.writes
     assert_operator api.reads.count('/branches/main/protection'), :>=, 2
   end
 
@@ -358,18 +503,18 @@ class GitHubReleaseTest < Minitest::Test
       steps.select { |step| step['uses'] }.each { |step| assert_match(/@[0-9a-f]{40}\z/, step['uses']) }
       assert_equal false, steps.first.dig('with', 'persist-credentials')
       assert_equal index.zero? ? '${{ needs.detect.outputs.base_sha }}' : 'main', steps.first.dig('with', 'ref')
-      mint = steps.find { |step| step.fetch('uses', '').start_with?('actions/create-github-app-token@') }
-      assert_equal 'evertonstz', mint.dig('with', 'owner')
-      assert_equal 'homebrew-moonshine-tap', mint.dig('with', 'repositories')
-      permissions = mint['with'].select { |key, _| key.start_with?('permission-') }
-      expected = {'permission-contents' => 'write', 'permission-pull-requests' => 'write', 'permission-actions' => 'read'}
-      expected.merge!('permission-actions' => 'read', 'permission-administration' => 'read') unless index.zero?
-      assert_equal expected, permissions
-      refute_equal true, mint.dig('with', 'skip-token-revoke')
-      assert_equal '${{ secrets.MOONSHINE_APP_PRIVATE_KEY }}', mint.dig('with', 'private-key')
+      refute steps.any? { |step| step.fetch('uses', '').start_with?('actions/create-github-app-token@') }
+      assert_equal({'contents' => 'write', 'pull-requests' => 'write', 'actions' => 'write'}, job['permissions'])
+      assert_equal '${{ secrets.MOONSHINE_PROTECTION_TOKEN }}', steps.last.dig('env', 'MOONSHINE_PROTECTION_TOKEN')
       assert_equal "ruby --disable=rubyopt tools/github_release.rb #{index.zero? ? 'publish' : 'merge'}", steps.last['run']
-      assert_equal '${{ steps.app.outputs.token }}', steps.last.dig('env', 'MOONSHINE_APP_TOKEN')
-      steps[0...-1].each { |step| refute step.fetch('env', {}).key?('MOONSHINE_APP_TOKEN') }
+      assert_equal '${{ github.token }}', steps.last.dig('env', 'GITHUB_TOKEN')
+      steps[0...-1].each do |step|
+        refute step.fetch('env', {}).key?('GITHUB_TOKEN')
+        refute step.fetch('env', {}).key?('MOONSHINE_PROTECTION_TOKEN')
+      end
+      refute_includes YAML.dump(job), 'MOONSHINE_APP'
+      refute_includes YAML.dump(job), 'MOONSHINE_BOT_ID'
+      refute_includes YAML.dump(job), 'MOONSHINE_CHECK_APP_ID'
       text = YAML.dump(job)
       %w[download-artifact check_releases.rb check_casks.rb update_release.rb pull_request_target --admin].each { |word| refute_includes text, word }
       refute_includes steps.last['run'], '${{'
@@ -381,9 +526,9 @@ class GitHubReleaseTest < Minitest::Test
   def test_helper_description_subprocess_does_not_receive_github_credentials
     Dir.mktmpdir do |directory|
       helper = Pathname(directory)/'helper.rb'
-      helper.write((ROOT/'lib/moonshine_host.rb').read + "\nraise 'Credential reached helper' if ENV['GITHUB_TOKEN'] || ENV['MOONSHINE_APP_TOKEN']\n")
+      helper.write((ROOT/'lib/moonshine_host.rb').read + "\nraise 'Credential reached helper' if ENV['GITHUB_TOKEN'] || ENV['GH_TOKEN'] || ENV['MOONSHINE_APP_TOKEN'] || ENV['MOONSHINE_PROTECTION_TOKEN']\n")
       script = "require #{(ROOT/'lib/release_catalog.rb').to_s.inspect}; puts MoonshineReleases.load_recipe(#{helper.to_s.inspect}, #{(ROOT/'reference').to_s.inspect}).release.fetch('version')"
-      output, error, status = Open3.capture3({'GITHUB_TOKEN' => 'fixture-read-secret', 'MOONSHINE_APP_TOKEN' => 'fixture-write-secret'}, RbConfig.ruby, '-e', script)
+      output, error, status = Open3.capture3({'GITHUB_TOKEN' => 'fixture-read-secret', 'GH_TOKEN' => 'fixture-personal-secret', 'MOONSHINE_APP_TOKEN' => 'fixture-write-secret', 'MOONSHINE_PROTECTION_TOKEN' => 'fixture-protection-secret'}, RbConfig.ruby, '-e', script)
       assert status.success?, error
       assert_equal MoonshineHost::RELEASE['version'], output.strip
       refute_includes output + error, 'fixture-write-secret'
